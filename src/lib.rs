@@ -88,12 +88,6 @@ unsafe impl Sync for DlHandle {}
 
 static KEPT_LIBRARY_HANDLE: Mutex<Option<DlHandle>> = Mutex::new(None);
 
-/// The input stream that flyline replaced at load time.  In a login shell the
-/// saved-stream stack can contain only flyline's own entries, so the unload
-/// path uses this as the reference stream to restore instead of searching the
-/// stack for a non-flyline entry.
-static ORIGINAL_INPUT_STREAM: Mutex<Option<ReferenceStream>> = Mutex::new(None);
-
 struct CallDepthGuard;
 
 impl CallDepthGuard {
@@ -128,6 +122,24 @@ fn report_error_no_panic(message: &str) {
 // C-compatible getter function that bash will call
 extern "C" fn flyline_get_char() -> c_int {
     let _depth = CallDepthGuard::enter();
+    // An unload requested from a nested input source (eval/source/command
+    // substitution) is deferred until bash is back on flyline's stream.  At
+    // that point finish the teardown before the instance is touched, then
+    // delegate one read to the restored stream's getter so bash seamlessly
+    // continues on readline.  A synthetic newline would make bash process an
+    // extra empty command, and EOF would make a login shell log out.
+    if FLYLINE_UNLOAD_PENDING.swap(false, Ordering::SeqCst) {
+        unsafe {
+            finish_deferred_unload();
+            if let Some(getter) = bash_symbols::bash_input.getter {
+                return getter();
+            }
+        }
+        return b'\n' as c_int;
+    }
+    // Passthrough is the safety net for getter calls that still reach flyline
+    // after a non-deferred unload.  It must run after the pending check above
+    // so deferred teardown can restore the readline stream first.
     if FLYLINE_PASS_THROUGH.load(Ordering::Relaxed) {
         let mut byte: u8 = 0;
         loop {
@@ -149,21 +161,6 @@ extern "C" fn flyline_get_char() -> c_int {
                 return bash_symbols::EOF;
             }
         }
-    }
-    // An unload requested from a nested input source (eval/source/command
-    // substitution) is deferred until bash is back on flyline's stream.  At
-    // that point finish the teardown before the instance is touched, then
-    // delegate one read to the restored stream's getter so bash seamlessly
-    // continues on readline.  A synthetic newline would make bash process an
-    // extra empty command, and EOF would make a login shell log out.
-    if FLYLINE_UNLOAD_PENDING.swap(false, Ordering::SeqCst) {
-        unsafe {
-            finish_deferred_unload();
-            if let Some(getter) = bash_symbols::bash_input.getter {
-                return getter();
-            }
-        }
-        return b'\n' as c_int;
     }
     let result = if let Some(boxed) = FLYLINE_INSTANCE_PTR
         .lock()
@@ -402,6 +399,7 @@ fn flyline_load_common() -> c_int {
     log::info!("flyline_builtin_load called, initializing flyline");
     release_kept_library_reference();
     FLYLINE_PASS_THROUGH.store(false, Ordering::SeqCst);
+    FLYLINE_UNLOAD_PENDING.store(false, Ordering::SeqCst);
     // Returning 0 means the load fails
     const SUCCESS: c_int = 1;
     const FAILURE: c_int = 0;
@@ -453,13 +451,6 @@ fn flyline_load_common() -> c_int {
 
     let setup_bash_input = |bash_input: *mut bash_symbols::BashInput| {
         let old_name = unsafe { (*bash_input).name };
-        let old_getter = unsafe { (*bash_input).getter };
-        let old_ungetter = unsafe { (*bash_input).ungetter };
-        let old_stream_type = unsafe { (*bash_input).stream_type };
-        *ORIGINAL_INPUT_STREAM
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) =
-            Some((old_getter, old_ungetter, old_stream_type));
         // Bash expects name to be heap allocated so it can free it later
         let name = c"flyline";
         let name_ptr = unsafe { bash_symbols::locked_xmalloc_cstr(name) };
@@ -642,47 +633,14 @@ pub extern "C" fn flyline_builtin_unload() {
     }
 
     unsafe {
-        if is_flyline_stream(&raw const bash_symbols::bash_input) {
-            // Top-level unload (e.g. running `enable -d flyline` at the prompt):
-            // the current input stream is flyline, so restore the stream that
-            // was saved when flyline was loaded.
-            if bash_symbols::stream_list.is_null() {
-                log::trace!("stream_list is null, trying to setup readline");
-
-                // we don't have access to yy_readline_(un)get so we can't set it directly
-                // but we can call with_input_from_stdin which will set it up properly
-                bash_symbols::bash_input.stream_type = bash_symbols::StreamType::None;
-                bash_symbols::with_input_from_stdin();
-            } else if is_flyline_stream(&raw const (*bash_symbols::stream_list).bash_input) {
-                // Defensive: the top of the saved stream stack is also flyline,
-                // so pop_stream() would restore a stream pointing at this
-                // library right before bash dlcloses it.  Replace every flyline
-                // stream reference instead.
-                log::warn!(
-                    "top of saved stream stack is flyline; replacing streams instead of popping"
-                );
-                replace_all_flyline_streams();
-            } else {
-                let head: &bash_symbols::StreamSaver = &*bash_symbols::stream_list;
-                let current_input_name =
-                    std::ffi::CStr::from_ptr(head.bash_input.name).to_string_lossy();
-                log::trace!(
-                    "Found stream_list entry with name: {} and type: {:?}",
-                    current_input_name,
-                    head.bash_input.stream_type
-                );
-                bash_symbols::pop_stream();
-            }
-        } else {
-            // The unload is happening while bash is reading from a nested input
-            // source (eval, source, command substitution, ...).  Calling
-            // pop_stream() here would pop and free the *wrong* stream (the
-            // nested one), leaving bash to resume reading from a freed stream
-            // or from flyline callbacks after the library is unloaded.  Instead
-            // replace every saved flyline stream with the original readline
-            // stream, so the nested pop afterwards restores a valid stream.
-            replace_saved_flyline_streams();
-        }
+        // Restore the readline input stream.  Do not pop or rewrite the saved
+        // stream stack: in login shells it is unreliable, and passthrough mode
+        // keeps any residual flyline getter call safe.  In an interactive
+        // shell with_input_from_stdin() reattaches yy_readline_get, which is
+        // what makes bash display PS1 again.
+        clear_flyline_streams_from_stack();
+        bash_symbols::bash_input.stream_type = bash_symbols::StreamType::None;
+        bash_symbols::with_input_from_stdin();
     }
 }
 
@@ -700,93 +658,33 @@ unsafe fn is_flyline_stream(input: *const bash_symbols::BashInput) -> bool {
     }
 }
 
-type ReferenceStream = (
-    Option<bash_symbols::ShCGetFunc>,
-    Option<bash_symbols::ShCUngetFunc>,
-    bash_symbols::StreamType,
-);
-
-/// Find a saved stream that is safe to restore after flyline is unloaded.
-/// flyline's own load pushes the stream it replaced (normally bash readline),
-/// so the first non-flyline entry on the saved-stream stack is the reference.
+/// Replace every saved flyline stream on the stream stack with a plain stdin
+/// stream.  The current input stream is handled separately (via
+/// `with_input_from_stdin`, which restores readline), but any nested entries
+/// pushed earlier would otherwise still point at this library after unload —
+/// and would confuse a later `enable -f flyline` reload.
 #[cfg(not(feature = "pre_bash_4_4"))]
-unsafe fn find_reference_stream() -> Option<ReferenceStream> {
-    // Use the stream that flyline replaced at load time.  Scanning the saved
-    // stream stack is unsafe in login shells: every entry can be flyline's
-    // own stream, or an already-finished rc-file stream that would restore
-    // Bash onto freed input state.
-    ORIGINAL_INPUT_STREAM
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone()
-}
-
-#[cfg(not(feature = "pre_bash_4_4"))]
-unsafe fn replace_stream_with_reference(
-    input: *mut bash_symbols::BashInput,
-    reference: ReferenceStream,
-) {
+unsafe fn clear_flyline_streams_from_stack() {
     unsafe {
-        let input = &mut *input;
-        if !input.name.is_null() {
-            bash_symbols::locked_xfree(input.name as *mut libc::c_void);
-        }
-        input.stream_type = reference.2;
-        input.getter = reference.0;
-        input.ungetter = reference.1;
-        // The reference stream (readline stdin) does not use `location`; a null
-        // location is safe for st_stdin and avoids sharing freed string memory.
-        input.location = std::mem::zeroed();
-        input.name = bash_symbols::locked_xmalloc_cstr(c"readline stdin");
-    }
-}
-
-#[cfg(not(feature = "pre_bash_4_4"))]
-unsafe fn replace_saved_flyline_streams() {
-    unsafe {
-        let reference = match find_reference_stream() {
-            Some(reference) => reference,
-            None => {
-                log::warn!(
-                    "flyline unload: no safe reference stream found; falling back to stdin"
-                );
-                bash_symbols::with_input_from_stdin();
-                return;
-            }
-        };
         let mut current = bash_symbols::stream_list;
-        let mut replaced = 0;
+        let mut cleared = 0;
         while !current.is_null() {
             let node = &mut *current;
             if is_flyline_stream(&raw const node.bash_input) {
-                replace_stream_with_reference(&raw mut node.bash_input, reference);
-                replaced += 1;
+                if !node.bash_input.name.is_null() {
+                    bash_symbols::locked_xfree(node.bash_input.name as *mut libc::c_void);
+                }
+                node.bash_input.stream_type = bash_symbols::StreamType::Stdin;
+                node.bash_input.getter = None;
+                node.bash_input.ungetter = None;
+                node.bash_input.location = std::mem::zeroed();
+                node.bash_input.name = bash_symbols::locked_xmalloc_cstr(c"readline stdin");
+                cleared += 1;
             }
             current = node.next;
         }
-        if replaced > 0 {
-            log::info!("Replaced {replaced} saved flyline input stream(s) with readline");
-        }
-    }
-}
-
-#[cfg(not(feature = "pre_bash_4_4"))]
-unsafe fn replace_all_flyline_streams() {
-    unsafe {
-        replace_saved_flyline_streams();
-        if is_flyline_stream(&raw const bash_symbols::bash_input) {
-        let reference = match find_reference_stream() {
-            Some(reference) => reference,
-            None => {
-                log::warn!(
-                    "flyline unload: no safe reference stream found; falling back to stdin for current stream"
-                );
-                bash_symbols::with_input_from_stdin();
-                return;
-            }
-        };
-            replace_stream_with_reference(&raw mut bash_symbols::bash_input, reference);
-            log::info!("Replaced current flyline input stream with readline");
+        if cleared > 0 {
+            log::info!("Cleared {cleared} saved flyline input stream(s)");
         }
     }
 }
@@ -806,19 +704,13 @@ unsafe fn finish_deferred_unload() {
         return;
     }
 
+    // Reattach the readline input stream so bash displays PS1 again and
+    // handles editing normally.  Any residual flyline getter calls are covered
+    // by passthrough mode.
     unsafe {
-        if is_flyline_stream(&raw const bash_symbols::bash_input) {
-            if bash_symbols::stream_list.is_null() {
-                bash_symbols::bash_input.stream_type = bash_symbols::StreamType::None;
-                bash_symbols::with_input_from_stdin();
-            } else if is_flyline_stream(&raw const (*bash_symbols::stream_list).bash_input) {
-                replace_all_flyline_streams();
-            } else {
-                bash_symbols::pop_stream();
-            }
-        } else {
-            replace_saved_flyline_streams();
-        }
+        clear_flyline_streams_from_stack();
+        bash_symbols::bash_input.stream_type = bash_symbols::StreamType::None;
+        bash_symbols::with_input_from_stdin();
     }
 }
 

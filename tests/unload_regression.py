@@ -137,7 +137,7 @@ def scenario(fd, pid, name, command, check_lines):
     print(f"[{'OK' if ok else 'FAIL'}] {name} (alive={alive})")
     for line in missing:
         print(f"    missing marker: {line!r}")
-    return alive
+    return ok
 
 
 def main():
