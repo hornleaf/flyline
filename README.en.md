@@ -117,7 +117,7 @@ Chinese localization covers the tutorial, CLI help, right-click menu, completion
 - The upstream [HalFrgrd/flyline](https://github.com/HalFrgrd/flyline) project and its maintainers, on which this fork is based
 - The [ratatui](https://github.com/ratatui/ratatui) terminal UI framework
 - Ecosystem projects such as [termina](https://github.com/HalFrgrd/termina), [flycomp](https://github.com/HalFrgrd/flycomp), [flash](https://github.com/HalFrgrd/flash), and [skim](https://github.com/lotabout/skim)
-- The Chinese localization, wide-character fixes, performance work, and stability fixes in this fork were developed and debugged with assistance from OpenAI Codex (AI coding assistant)
+- This fork is primarily supported by DeepSeek V4 Flash
 
 ## Development
 
