@@ -39,6 +39,15 @@ import time
 PROMPT = "bash-5.3# "
 
 
+def answer_cpr(fd, data):
+    """Flyline asks the terminal for its cursor position (`ESC[6n`) while
+    setting up the inline viewport.  A real terminal answers immediately; a
+    bare PTY test must answer too, or flyline blocks waiting for the report
+    and never processes further input.  Answer with row 1, column 1."""
+    if b"\x1b[6n" in data:
+        os.write(fd, b"\x1b[1;1R")
+
+
 def read_until(fd, needle, timeout=20.0):
     data = b""
     deadline = time.time() + timeout
@@ -52,12 +61,15 @@ def read_until(fd, needle, timeout=20.0):
             if not chunk:
                 break
             data += chunk
+            answer_cpr(fd, chunk)
             if needle.encode() in data:
                 return data
     return data
 
 
 def send(fd, text, wait=0.3):
+    # flyline treats CR (Enter) as submit; a bare LF is just Ctrl+J text input.
+    text = text.replace("\n", "\r")
     os.write(fd, text.encode())
     time.sleep(wait)
 
@@ -96,6 +108,7 @@ def wait_for_markers(fd, markers, timeout=25.0):
             if not chunk:
                 break
             data += chunk
+            answer_cpr(fd, chunk)
         text = strip_ansi(data.decode(errors="replace"))
         if all(marker in text for marker in markers):
             return data
@@ -108,7 +121,8 @@ def drain(fd, seconds=2.0):
         readable, _, _ = select.select([fd], [], [], 0.2)
         if readable:
             try:
-                os.read(fd, 65536)
+                chunk = os.read(fd, 65536)
+                answer_cpr(fd, chunk)
             except OSError:
                 break
 
@@ -260,7 +274,7 @@ def main():
     results.append(ok)
 
     try:
-        os.write(fd, b"exit\n")
+        os.write(fd, b"exit\r")
         os.close(fd)
     except OSError:
         pass
