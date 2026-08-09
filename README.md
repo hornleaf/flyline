@@ -117,7 +117,7 @@ export LANG=zh_CN.UTF-8           # 跟随系统 locale
 - 上游项目 [HalFrgrd/flyline](https://github.com/HalFrgrd/flyline) 及其维护者，本 fork 基于其代码构建
 - [ratatui](https://github.com/ratatui/ratatui) 终端 UI 框架
 - [termina](https://github.com/HalFrgrd/termina)、[flycomp](https://github.com/HalFrgrd/flycomp)、[flash](https://github.com/HalFrgrd/flash)、[skim](https://github.com/lotabout/skim) 等生态项目
-- 本 fork 的中文支持、宽字符修复、性能优化与稳定性修复，由 OpenAI Codex（AI 编程助手）协助开发调试
+- 本 fork 由 DeepSeek V4 Flash 提供主要支持
 
 ## 开发
 
