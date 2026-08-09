@@ -136,7 +136,21 @@ extern "C" fn flyline_get_char() -> c_int {
             }
         }
     } else {
-        report_stderr_no_panic("flyline_get_char: FLYLINE_INSTANCE_PTR is None");
+        // The instance has already been torn down (e.g. `enable -d flyline`
+        // ran from a nested login shell), but bash's input stream still points
+        // at this getter.  Restore the readline stdin stream so bash does not
+        // keep calling into an unloaded/uninitialized flyline, then signal EOF
+        // so the current read ends cleanly.
+        unsafe {
+            if is_flyline_stream(&raw const bash_symbols::bash_input) {
+                report_stderr_no_panic(
+                    "flyline_get_char: FLYLINE_INSTANCE_PTR is None; restoring readline stdin",
+                );
+                bash_symbols::with_input_from_stdin();
+            } else {
+                report_stderr_no_panic("flyline_get_char: FLYLINE_INSTANCE_PTR is None");
+            }
+        }
         bash_symbols::EOF
     };
 
@@ -679,9 +693,10 @@ unsafe fn replace_saved_flyline_streams() {
         let reference = match find_reference_stream() {
             Some(reference) => reference,
             None => {
-                log::error!(
-                    "flyline unload: no safe reference stream found; cannot replace saved flyline streams"
+                log::warn!(
+                    "flyline unload: no safe reference stream found; falling back to stdin"
                 );
+                bash_symbols::with_input_from_stdin();
                 return;
             }
         };
@@ -706,15 +721,16 @@ unsafe fn replace_all_flyline_streams() {
     unsafe {
         replace_saved_flyline_streams();
         if is_flyline_stream(&raw const bash_symbols::bash_input) {
-            let reference = match find_reference_stream() {
-                Some(reference) => reference,
-                None => {
-                    log::error!(
-                        "flyline unload: no safe reference stream found; cannot replace current flyline stream"
-                    );
-                    return;
-                }
-            };
+        let reference = match find_reference_stream() {
+            Some(reference) => reference,
+            None => {
+                log::warn!(
+                    "flyline unload: no safe reference stream found; falling back to stdin for current stream"
+                );
+                bash_symbols::with_input_from_stdin();
+                return;
+            }
+        };
             replace_stream_with_reference(&raw mut bash_symbols::bash_input, reference);
             log::info!("Replaced current flyline input stream with readline");
         }
