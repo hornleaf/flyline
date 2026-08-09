@@ -559,12 +559,6 @@ fn zh_help_translation_exact(key: &str) -> Option<&'static str> {
         "Whether to change the mouse cursor shape depending on what is hovered" => {
             "是否根据悬停内容改变鼠标光标形状"
         }
-        "Enable or disable the right-click context menu. Disabled by default; enable it to show the copy/cut/paste menu when right-clicking" => {
-            "启用或禁用右键上下文菜单。默认禁用；启用后右键点击会显示复制/剪切/粘贴菜单。"
-        }
-        "Enable or disable the right-click context menu. Disabled by default" => {
-            "启用或禁用右键上下文菜单。默认禁用。"
-        }
         "Enable or disable the tutorial. Defaults to `true`" => "启用或禁用新手教程。默认为 `true`",
         "Enable or disable auto-suggest (auto-started tab completion suggestions)" => {
             "启用或禁用自动建议（自动启动的 Tab 补全建议）"
@@ -1093,22 +1087,6 @@ mod tests {
         assert_eq!(
             zh_help_translation("Show version information"),
             Some("显示版本信息")
-        );
-    }
-
-    #[test]
-    fn right_click_menu_help_translations_match() {
-        assert_eq!(
-            zh_help_translation(
-                "Enable or disable the right-click context menu. Disabled by default; enable it to show the copy/cut/paste menu when right-clicking"
-            ),
-            Some("启用或禁用右键上下文菜单。默认禁用；启用后右键点击会显示复制/剪切/粘贴菜单。")
-        );
-        assert_eq!(
-            zh_help_translation(
-                "Enable or disable the right-click context menu. Disabled by default"
-            ),
-            Some("启用或禁用右键上下文菜单。默认禁用。")
         );
     }
 

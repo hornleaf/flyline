@@ -490,7 +490,7 @@ impl<'a> App<'a> {
             dismissed_agent_mode_buffer: None,
             mouse_state: time_it!(
                 "startup: mouse state",
-                MouseState::initialize(&settings.mouse_mode, settings.right_click_menu)
+                MouseState::initialize(&settings.mouse_mode)
             ),
             content_mode: ContentMode::Normal,
             last_contents: None,

@@ -72,7 +72,7 @@ flyline set-cursor --backend flyline
 flyline set-cursor --style '#00ff00' --effect fade
 
 # Mouse
-flyline --right-click-menu true            # enable flyline's right-click menu (disabled by default)
+flyline mouse --mode disabled              # don't capture the mouse; right-click/selection stays with the terminal
 flyline mouse --mode smart                 # disabled / simple / smart
 
 # Keybindings
@@ -88,7 +88,7 @@ flyline perf dump
 flyline perf stop
 ```
 
-> Note: `--right-click-menu` is disabled by default. When disabled, flyline does not request terminal mouse capture, so right-click events stay with the terminal (its native menu/paste). When enabled, flyline takes over the mouse and shows its own right-click menu.
+> Note: the right-click menu follows `flyline mouse --mode`. With `disabled`, flyline does not request terminal mouse capture, so right-click events stay with the terminal (its native menu/paste). With `smart`/`simple`, flyline takes over the mouse and shows its own right-click menu.
 
 ## Prompts
 

@@ -112,14 +112,6 @@ struct FlylineArgs {
     /// to the terminal emulator. Equivalent to `flyline set-cursor --backend terminal`.
     #[arg(long = "no-custom-cursor")]
     no_custom_cursor: bool,
-    /// Enable or disable the right-click context menu. Disabled by default;
-    /// enable it to show the copy/cut/paste menu when right-clicking.
-    #[arg(
-        long = "right-click-menu",
-        default_missing_value = "true",
-        num_args = 0..=1
-    )]
-    right_click_menu: Option<bool>,
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -614,13 +606,6 @@ enum Commands {
         /// Mouse capture mode (disabled, simple, smart).
         #[arg(long = "mode", value_name = "MODE")]
         mode: Option<settings::MouseMode>,
-        /// Enable or disable the right-click context menu. Disabled by default.
-        #[arg(
-            long = "right-click-menu",
-            default_missing_value = "true",
-            num_args = 0..=1
-        )]
-        right_click_menu: Option<bool>,
     },
     /// Performance profiling commands: start, stop, or dump stats.
     #[command(name = "perf", verbatim_doc_comment)]
@@ -1050,11 +1035,6 @@ impl Flyline {
                             .set_backend(Some(cursor::CursorBackend::Terminal));
                     }
 
-                    if let Some(enabled) = parsed.right_click_menu {
-                        log::info!("Right-click menu set to {}", enabled);
-                        self.settings.right_click_menu = enabled;
-                    }
-
                     match parsed.command {
                         Some(Commands::Version { copy }) => {
                             show_version(copy);
@@ -1349,7 +1329,6 @@ impl Flyline {
                             debug,
                             change_shape,
                             mode,
-                            right_click_menu,
                         }) => {
                             if let Some(enabled) = debug {
                                 log::info!("Mouse debug mode enabled: {}", enabled);
@@ -1362,10 +1341,6 @@ impl Flyline {
                             if let Some(m) = mode {
                                 log::info!("Mouse mode set to {:?}", m);
                                 self.settings.mouse_mode = m;
-                            }
-                            if let Some(enabled) = right_click_menu {
-                                log::info!("Right-click menu set to {}", enabled);
-                                self.settings.right_click_menu = enabled;
                             }
                         }
                         None => {}
@@ -2091,14 +2066,17 @@ mod tests {
     }
 
     #[test]
-    fn test_right_click_menu_completion_has_help() {
-        for raw_cmd in ["flyline --", "flyline mouse --"] {
+    fn test_completion_help_not_blanked() {
+        for (raw_cmd, flag) in [
+            ("flyline --", "--no-custom-cursor"),
+            ("flyline mouse --", "--mode"),
+        ] {
             let cursor_byte = raw_cmd.len();
             let comps = complete_flyline_args(raw_cmd, "--", cursor_byte).unwrap();
             let candidate = comps
                 .iter()
-                .find(|c| c.get_value().to_string_lossy() == "--right-click-menu")
-                .expect("right-click-menu candidate");
+                .find(|c| c.get_value().to_string_lossy() == flag)
+                .expect("completion candidate");
             assert!(
                 candidate.get_help().is_some(),
                 "help must not be blanked for {raw_cmd}"
@@ -2241,24 +2219,5 @@ mod tests {
 
         let args_without = FlylineArgs::try_parse_from(["flyline"]).unwrap();
         assert!(!args_without.no_custom_cursor);
-    }
-
-    #[test]
-    fn test_flyline_right_click_menu_parse() {
-        let args = FlylineArgs::try_parse_from(["flyline", "--right-click-menu", "false"]).unwrap();
-        assert_eq!(args.right_click_menu, Some(false));
-
-        let args_default = FlylineArgs::try_parse_from(["flyline", "--right-click-menu"]).unwrap();
-        assert_eq!(args_default.right_click_menu, Some(true));
-
-        let args_mouse =
-            FlylineArgs::try_parse_from(["flyline", "mouse", "--right-click-menu"]).unwrap();
-        let Commands::Mouse {
-            right_click_menu, ..
-        } = args_mouse.command.unwrap()
-        else {
-            panic!("expected Mouse subcommand");
-        };
-        assert_eq!(right_click_menu, Some(true));
     }
 }

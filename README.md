@@ -72,7 +72,7 @@ flyline set-cursor --backend flyline
 flyline set-cursor --style '#00ff00' --effect fade
 
 # 鼠标
-flyline --right-click-menu true            # 开启 flyline 右键菜单（默认禁用）
+flyline mouse --mode disabled              # 不捕获鼠标，右键/选择交给终端
 flyline mouse --mode smart                 # disabled / simple / smart
 
 # 快捷键
@@ -88,7 +88,7 @@ flyline perf dump
 flyline perf stop
 ```
 
-> 说明：`--right-click-menu` 默认禁用。禁用时 flyline 不会请求终端鼠标捕获，右键事件由终端自己处理（例如终端的原生菜单/粘贴）；开启后 flyline 接管鼠标并显示自己的右键菜单。
+> 说明：右键菜单跟随 `flyline mouse --mode`。`disabled` 时 flyline 不请求终端鼠标捕获，右键事件由终端自己处理（例如终端的原生菜单/粘贴）；`smart`/`simple` 时 flyline 接管鼠标并显示自己的右键菜单。
 
 ## 提示符
 
