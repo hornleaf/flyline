@@ -1,5 +1,13 @@
 pub(crate) const CHANGELOG: &str = r#"# Changelog
 
+## v1.5.0-fork
+- **中文界面（i18n）**：教程、CLI 帮助、右键菜单、补全项描述与快捷键动作描述支持中文，根据 `FLYLINE_LANG` / `LC_ALL` / `LANG` 自动切换。
+- **宽字符渲染修复**：中文、emoji 在补全列表、右键菜单、教程等界面中不再错位或溢出。
+- **退格性能优化**：限制 Bash `type` 查询频率并跳过超长命令词，解决长按退格时 PATH 较慢（如 WSL）的卡顿。
+- **右键菜单开关**：`--right-click-menu` 默认禁用；禁用时 flyline 不捕获鼠标，右键事件交给终端处理。
+- **不使用自定义光标**：新增 `--no-custom-cursor` 选项。
+- **卸载崩溃修复**：修复 `enable -d flyline` 在嵌套输入源下卸载导致 Bash 崩溃的问题。
+
 ## v1.5.0
 - **Termina Backend**: Switched terminal rendering backend to `termina` for enhanced event handling and precise UI rendering.
 - **Enhanced Mouse Selection & UX**: Added triple-click line selection, quad-click buffer selection, click-and-drag suggestion selection, and isolated scrolling movements.

@@ -1,6 +1,6 @@
 # PKGBUILD based on orhun's official AUR package: https://github.com/orhun/PKGBUILDs/blob/master/flyline/PKGBUILD
 pkgname=flyline
-pkgver=1.5.0
+pkgver=1.5.0.fork
 pkgrel=1
 pkgdesc="A Bash plugin to replace readline for a modern line editing experience"
 arch=('x86_64' 'aarch64')

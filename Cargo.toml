@@ -1,6 +1,6 @@
 [package]
 name = "flyline"
-version = "1.5.0"
+version = "1.5.0-fork"
 edition = "2024"
 
 [lints.clippy]
