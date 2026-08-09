@@ -112,6 +112,13 @@ export LANG=zh_CN.UTF-8           # follow the system locale
 
 Chinese localization covers the tutorial, CLI help, right-click menu, completion descriptions, and keybinding action descriptions.
 
+## Acknowledgements
+
+- The upstream [HalFrgrd/flyline](https://github.com/HalFrgrd/flyline) project and its maintainers, on which this fork is based
+- The [ratatui](https://github.com/ratatui/ratatui) terminal UI framework
+- Ecosystem projects such as [termina](https://github.com/HalFrgrd/termina), [flycomp](https://github.com/HalFrgrd/flycomp), [flash](https://github.com/HalFrgrd/flash), and [skim](https://github.com/lotabout/skim)
+- The Chinese localization, wide-character fixes, performance work, and stability fixes in this fork were developed and debugged with assistance from OpenAI Codex (AI coding assistant)
+
 ## Development
 
 ```bash

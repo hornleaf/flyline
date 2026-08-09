@@ -9,3 +9,5 @@ docker_build/
 /tmux-client-*.log
 /tmux-out-*.log
 /tmux-server-*.log
+/dist/
+/RELEASE_NOTES_1.5.0-fork.md
