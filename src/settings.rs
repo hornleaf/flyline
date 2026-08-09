@@ -239,6 +239,9 @@ pub struct Settings {
     /// position and selection. When `false`, mouse interaction with the buffer
     /// does not change the buffer selection or cursor position.
     pub select_with_mouse: bool,
+    /// Whether the right-click context menu is enabled. Disabled by default;
+    /// enable it to show the copy/cut/paste menu on right click.
+    pub right_click_menu: bool,
     /// Cursor appearance and animation settings (set via `flyline set-cursor`).
     pub cursor_config: CursorConfig,
     /// Mouse capture mode.
@@ -307,6 +310,7 @@ impl Default for Settings {
             show_inline_history: true,
             auto_close_chars: true,
             select_with_mouse: true,
+            right_click_menu: false,
             cursor_config: CursorConfig::default(),
             mouse_mode: MouseMode::default(),
             agent_commands: HashMap::default(),

@@ -1737,7 +1737,11 @@ pub fn possible_context_action_completions(current: &std::ffi::OsStr) -> Vec<Com
                     action_prefix,
                     action.as_str()
                 ))
-                .help(action.get_message().map(clap::builder::StyledStr::from)),
+                .help(
+                    action.get_message().map(|m| {
+                        clap::builder::StyledStr::from(crate::i18n::localize_help_text(m))
+                    }),
+                ),
                 // Option 2: want to chain another action (appends '+' and suppresses space)
                 CompletionCandidate::new(format!(
                     "{}PREFIX_DELIM{}{}+NO_SUFFIX",
@@ -1745,7 +1749,11 @@ pub fn possible_context_action_completions(current: &std::ffi::OsStr) -> Vec<Com
                     action_prefix,
                     action.as_str()
                 ))
-                .help(action.get_message().map(clap::builder::StyledStr::from)),
+                .help(
+                    action.get_message().map(|m| {
+                        clap::builder::StyledStr::from(crate::i18n::localize_help_text(m))
+                    }),
+                ),
             ];
         }
 
@@ -1760,7 +1768,9 @@ pub fn possible_context_action_completions(current: &std::ffi::OsStr) -> Vec<Com
                             "{}PREFIX_DELIM{}{}NO_SUFFIX",
                             prefix, action_prefix, s
                         ))
-                        .help(a.get_message().map(clap::builder::StyledStr::from)),
+                        .help(a.get_message().map(|m| {
+                            clap::builder::StyledStr::from(crate::i18n::localize_help_text(m))
+                        })),
                     )
                 } else {
                     None
@@ -1775,7 +1785,7 @@ pub fn possible_context_action_completions(current: &std::ffi::OsStr) -> Vec<Com
                     prefix, action_prefix, "insertString(value)"
                 ))
                 .help(Some(clap::builder::StyledStr::from(
-                    "Insert a literal string of characters",
+                    crate::i18n::localize_help_text("Insert a literal string of characters"),
                 ))),
             );
         }
@@ -1785,7 +1795,9 @@ pub fn possible_context_action_completions(current: &std::ffi::OsStr) -> Vec<Com
                     "{}PREFIX_DELIM{}{}NO_SUFFIX",
                     prefix, action_prefix, "runBashCommand(command)"
                 ))
-                .help(Some(clap::builder::StyledStr::from("Run a Bash command"))),
+                .help(Some(clap::builder::StyledStr::from(
+                    crate::i18n::localize_help_text("Run a Bash command"),
+                ))),
             );
         }
         return candidates;
@@ -1823,7 +1835,9 @@ pub fn possible_context_action_completions(current: &std::ffi::OsStr) -> Vec<Com
                         "{}PREFIX_DELIM{}{}{}NO_SUFFIX",
                         prefix, neg_prefix, name, extra
                     ))
-                    .help(description.map(clap::builder::StyledStr::from))
+                    .help(description.map(|m| {
+                        clap::builder::StyledStr::from(crate::i18n::localize_help_text(m))
+                    }))
                 })
                 .collect::<Vec<_>>()
         })
@@ -3022,7 +3036,13 @@ pub fn print_bindings_table(
         filter_key.and_then(|k| match KeyEventMatch::try_from(k) {
             Ok(KeyEventMatch::Exact(ev)) => Some(ev),
             _ => {
-                eprintln!("Warning: could not parse key sequence '{}'", k);
+                eprintln!(
+                    "{}",
+                    crate::i18n::translate_fmt(
+                        crate::t!("Warning: could not parse key sequence '{}'"),
+                        &[k.to_string()],
+                    )
+                );
                 None
             }
         });

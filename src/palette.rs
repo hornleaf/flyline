@@ -502,8 +502,11 @@ pub fn possible_style_name_completions(current: &std::ffi::OsStr) -> Vec<Complet
         .filter_map(|kind| {
             let name = kind.to_string();
             if name.to_lowercase().contains(&current_lower) {
-                let candidate = CompletionCandidate::new(format!("{}=NO_SUFFIX", name))
-                    .help(kind.get_message().map(clap::builder::StyledStr::from));
+                let candidate = CompletionCandidate::new(format!("{}=NO_SUFFIX", name)).help(
+                    kind.get_message().map(|m| {
+                        clap::builder::StyledStr::from(crate::i18n::localize_help_text(m))
+                    }),
+                );
                 Some(candidate)
             } else {
                 None

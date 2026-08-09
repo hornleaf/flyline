@@ -37,6 +37,11 @@ impl std::fmt::Display for PointerShape {
 
 pub struct MouseState {
     enabled: bool,
+    /// Whether flyline is allowed to request mouse capture from the terminal.
+    /// When false (right-click menu disabled), flyline never enables mouse
+    /// tracking so the terminal keeps handling mouse events itself (e.g. its
+    /// own right-click menu/paste).
+    capture_allowed: bool,
     last_left_click_times: Vec<std::time::Instant>,
     last_left_click_buffer_pos: Option<usize>,
     /// True while the left mouse button is currently being held down.
@@ -58,33 +63,35 @@ pub struct MouseState {
 impl MouseState {
     /// Initialize mouse state for the given mode, immediately enabling mouse capture
     /// (via crossterm) when appropriate.
-    pub fn initialize(mode: &MouseMode) -> Self {
+    pub fn initialize(mode: &MouseMode, capture_allowed: bool) -> Self {
         use termina::escape::csi::{Csi, DecPrivateMode, DecPrivateModeCode, Mode};
         let set_mode = |code| Csi::Mode(Mode::SetDecPrivateMode(DecPrivateMode::Code(code)));
-        let enabled = match mode {
-            MouseMode::Disabled => false,
-            MouseMode::Simple | MouseMode::Smart => {
-                match crate::flush_stdout!(
-                    "{}{}{}{}{}",
-                    set_mode(DecPrivateModeCode::MouseTracking),
-                    set_mode(DecPrivateModeCode::ButtonEventMouse),
-                    set_mode(DecPrivateModeCode::AnyEventMouse),
-                    set_mode(DecPrivateModeCode::SGRMouse),
-                    XtShiftEscape::Enable
-                ) {
-                    Ok(_) => {
-                        log::trace!("Mouse capture enabled: initial setup for {:?} mode", mode);
-                        true
-                    }
-                    Err(e) => {
-                        log::error!("Failed to enable mouse capture on init: {}", e);
-                        false
+        let enabled = capture_allowed
+            && match mode {
+                MouseMode::Disabled => false,
+                MouseMode::Simple | MouseMode::Smart => {
+                    match crate::flush_stdout!(
+                        "{}{}{}{}{}",
+                        set_mode(DecPrivateModeCode::MouseTracking),
+                        set_mode(DecPrivateModeCode::ButtonEventMouse),
+                        set_mode(DecPrivateModeCode::AnyEventMouse),
+                        set_mode(DecPrivateModeCode::SGRMouse),
+                        XtShiftEscape::Enable
+                    ) {
+                        Ok(_) => {
+                            log::trace!("Mouse capture enabled: initial setup for {:?} mode", mode);
+                            true
+                        }
+                        Err(e) => {
+                            log::error!("Failed to enable mouse capture on init: {}", e);
+                            false
+                        }
                     }
                 }
-            }
-        };
+            };
         MouseState {
             enabled,
+            capture_allowed,
             last_left_click_times: Vec::new(),
             last_left_click_buffer_pos: None,
             left_button_down: false,
@@ -102,7 +109,7 @@ impl MouseState {
     /// Enable mouse capture, logging `reason` to explain why.
     /// Does nothing (and logs nothing) if mouse capture is already enabled.
     pub fn enable(&mut self) {
-        if self.enabled {
+        if self.enabled || !self.capture_allowed {
             return;
         }
         use termina::escape::csi::{Csi, DecPrivateMode, DecPrivateModeCode, Mode};
@@ -277,6 +284,36 @@ impl Drop for MouseState {
             )
             .and_then(|_| stdout.flush());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::settings::MouseMode;
+
+    #[test]
+    fn initialize_respects_capture_allowed() {
+        // Even when the mode asks for mouse capture, a disabled right-click
+        // menu means flyline must not grab the mouse from the terminal.
+        let forbidden = MouseState::initialize(&MouseMode::Smart, false);
+        assert!(!forbidden.enabled);
+
+        let allowed = MouseState::initialize(&MouseMode::Smart, true);
+        assert!(allowed.enabled);
+
+        let mode_disabled = MouseState::initialize(&MouseMode::Disabled, true);
+        assert!(!mode_disabled.enabled);
+    }
+
+    #[test]
+    fn enable_is_noop_when_capture_not_allowed() {
+        let mut state = MouseState::initialize(&MouseMode::Smart, false);
+        assert!(!state.enabled);
+        state.enable();
+        assert!(!state.enabled);
+        state.toggle();
+        assert!(!state.enabled);
     }
 }
 

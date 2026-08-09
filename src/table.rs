@@ -6,6 +6,7 @@ use crate::unicode_helpers::{
 use pulldown_cmark::Alignment;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::prelude::*;
+use unicode_width::UnicodeWidthStr;
 
 /// Accumulated data for a single table being built.
 pub struct TableAccum {
@@ -46,11 +47,11 @@ impl Default for TableAccum {
 /// separator dashes look reasonable.
 pub fn compute_natural_col_widths(accum: &TableAccum) -> Vec<usize> {
     let ncols = accum.header_cells.len();
-    let mut col_widths: Vec<usize> = accum.header_cells.iter().map(|s| s.len()).collect();
+    let mut col_widths: Vec<usize> = accum.header_cells.iter().map(|s| s.width()).collect();
     for row in &accum.body_rows {
         for (j, cell) in row.iter().enumerate() {
             if j < ncols {
-                col_widths[j] = col_widths[j].max(cell.len());
+                col_widths[j] = col_widths[j].max(cell.width());
             }
         }
     }
@@ -58,6 +59,21 @@ pub fn compute_natural_col_widths(accum: &TableAccum) -> Vec<usize> {
         *w = (*w).max(3);
     }
     col_widths
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn natural_col_widths_use_display_width() {
+        let mut accum = TableAccum::new(vec![Alignment::Left]);
+        accum.header_cells = vec!["名字".to_string()];
+        accum.body_rows = vec![vec!["中文内容".to_string()]];
+        let widths = compute_natural_col_widths(&accum);
+        // 2 CJK chars in the header = 4 display columns (not 6 bytes).
+        assert_eq!(widths[0], 8); // max(4, 4*2)
+    }
 }
 
 /// Wrap a cell string to fit within `col_width` terminal columns.
@@ -153,15 +169,16 @@ pub fn render_table_with_options(
         spans.push(Span::raw(format!("{BOX_VERTICAL} ")));
         for (j, cell) in cells.iter().enumerate() {
             let width = col_widths.get(j).copied().unwrap_or(0);
-            let padded = if center {
-                let content_len = cell.len();
-                let padding = width.saturating_sub(content_len);
-                let left_pad = padding / 2;
-                let right_pad = padding - left_pad;
-                format!("{}{}{}", " ".repeat(left_pad), cell, " ".repeat(right_pad))
+            // Pad using the *display* width so wide characters (CJK, emoji)
+            // do not break the column layout.
+            let content_width = cell.width();
+            let padding = width.saturating_sub(content_width);
+            let (left_pad, right_pad) = if center {
+                (padding / 2, padding - padding / 2)
             } else {
-                format!("{:<width$}", cell, width = width)
+                (0, padding)
             };
+            let padded = format!("{}{}{}", " ".repeat(left_pad), cell, " ".repeat(right_pad));
             if bold {
                 spans.push(Span::styled(
                     padded,

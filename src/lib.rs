@@ -1,5 +1,6 @@
 use libc::{c_char, c_int};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -36,6 +37,7 @@ mod dparser;
 mod globbing;
 mod history;
 pub mod hostnames;
+mod i18n;
 mod iter_first_last;
 mod kill_on_drop_child;
 mod logging;
@@ -57,6 +59,45 @@ mod users;
 // Global state for our custom input stream
 static FLYLINE_INSTANCE_PTR: Mutex<Option<Box<Flyline>>> = Mutex::new(None);
 
+// Number of flyline library frames currently on the call stack (the input
+// stream getter and the `flyline` builtin entry point).
+//
+// `enable -d flyline` unloads the builtin *and* dlclose()s the library.  When
+// the unload is requested from inside our own code (e.g. a `runBashCommand`
+// key binding that executes `enable -d flyline`), bash would dlclose() the
+// library while its code is still running, which segfaults the shell.  In that
+// situation we keep the library mapped and defer the real teardown until the
+// next flyline_get_char() call reaches a safe point.
+static FLYLINE_CALL_DEPTH: AtomicUsize = AtomicUsize::new(0);
+static FLYLINE_UNLOAD_PENDING: AtomicBool = AtomicBool::new(false);
+
+// When `enable -d flyline` runs from inside our own code, we add an extra
+// dlopen() reference so bash's dlclose() does not unmap the library while we
+// are still executing.  The reference is intentionally kept until the library
+// is loaded again (see release_kept_library_reference), since dlclose()ing
+// ourselves from inside our own code would unmap the function we are returning
+// from.
+struct DlHandle(*mut libc::c_void);
+unsafe impl Send for DlHandle {}
+unsafe impl Sync for DlHandle {}
+
+static KEPT_LIBRARY_HANDLE: Mutex<Option<DlHandle>> = Mutex::new(None);
+
+struct CallDepthGuard;
+
+impl CallDepthGuard {
+    fn enter() -> Self {
+        FLYLINE_CALL_DEPTH.fetch_add(1, Ordering::SeqCst);
+        Self
+    }
+}
+
+impl Drop for CallDepthGuard {
+    fn drop(&mut self) {
+        FLYLINE_CALL_DEPTH.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 fn catch_unwind_safe<T>(f: impl FnOnce() -> T) -> Result<T, ()> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).map_err(|_| ())
 }
@@ -75,7 +116,8 @@ fn report_error_no_panic(message: &str) {
 
 // C-compatible getter function that bash will call
 extern "C" fn flyline_get_char() -> c_int {
-    if let Some(boxed) = FLYLINE_INSTANCE_PTR
+    let _depth = CallDepthGuard::enter();
+    let result = if let Some(boxed) = FLYLINE_INSTANCE_PTR
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .as_mut()
@@ -96,7 +138,18 @@ extern "C" fn flyline_get_char() -> c_int {
     } else {
         report_stderr_no_panic("flyline_get_char: FLYLINE_INSTANCE_PTR is None");
         bash_symbols::EOF
+    };
+
+    // If `enable -d flyline` was executed from inside our own code (a
+    // runBashCommand key binding, agent mode, ...), the instance borrow above
+    // has now ended and this is the safe point to finish the deferred teardown
+    // before bash reads from a different input stream.
+    if FLYLINE_UNLOAD_PENDING.swap(false, Ordering::SeqCst) {
+        unsafe {
+            finish_deferred_unload();
+        }
     }
+    result
 }
 
 // C-compatible ungetter function that bash will call
@@ -120,6 +173,7 @@ extern "C" fn flyline_unget_char(c: c_int) -> c_int {
 }
 
 extern "C" fn flyline_call_command(words: *const bash_symbols::WordList) -> c_int {
+    let _depth = CallDepthGuard::enter();
     let result = catch_unwind_safe(|| {
         if let Some(boxed) = FLYLINE_INSTANCE_PTR
             .lock()
@@ -288,6 +342,7 @@ const FLYLINE_ENV_VAR_VALUE: &str = env!("CARGO_PKG_VERSION");
 
 fn flyline_load_common() -> c_int {
     log::info!("flyline_builtin_load called, initializing flyline");
+    release_kept_library_reference();
     // Returning 0 means the load fails
     const SUCCESS: c_int = 1;
     const FAILURE: c_int = 0;
@@ -486,6 +541,21 @@ pub extern "C" fn flyline_builtin_unload() {
         );
     });
 
+    // If the unload was requested while flyline code is still on the call
+    // stack, bash is about to dlclose() this library under our feet.  Keep the
+    // library mapped so the in-flight call can finish, and defer the real
+    // teardown to the next flyline_get_char() call.  The extra dlopen()
+    // reference is released on the next load; calling dlclose() from inside
+    // our own code would unmap the function we are returning from.
+    if FLYLINE_CALL_DEPTH.load(Ordering::SeqCst) > 0 {
+        log::warn!(
+            "flyline unload requested from inside flyline code; deferring teardown to the next input read"
+        );
+        keep_library_loaded();
+        FLYLINE_UNLOAD_PENDING.store(true, Ordering::SeqCst);
+        return;
+    }
+
     let had_instance = FLYLINE_INSTANCE_PTR
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -497,24 +567,238 @@ pub extern "C" fn flyline_builtin_unload() {
     }
 
     unsafe {
-        if bash_symbols::stream_list.is_null() {
-            log::trace!("stream_list is null, trying to setup readline");
+        if is_flyline_stream(&raw const bash_symbols::bash_input) {
+            // Top-level unload (e.g. running `enable -d flyline` at the prompt):
+            // the current input stream is flyline, so restore the stream that
+            // was saved when flyline was loaded.
+            if bash_symbols::stream_list.is_null() {
+                log::trace!("stream_list is null, trying to setup readline");
 
-            // we don't have access to yy_readline_(un)get so we can't set it directly
-            // but we can call with_input_from_stdin which will set it up properly
-            bash_symbols::bash_input.stream_type = bash_symbols::StreamType::None;
-            bash_symbols::with_input_from_stdin();
+                // we don't have access to yy_readline_(un)get so we can't set it directly
+                // but we can call with_input_from_stdin which will set it up properly
+                bash_symbols::bash_input.stream_type = bash_symbols::StreamType::None;
+                bash_symbols::with_input_from_stdin();
+            } else if is_flyline_stream(&raw const (*bash_symbols::stream_list).bash_input) {
+                // Defensive: the top of the saved stream stack is also flyline,
+                // so pop_stream() would restore a stream pointing at this
+                // library right before bash dlcloses it.  Replace every flyline
+                // stream reference instead.
+                log::warn!(
+                    "top of saved stream stack is flyline; replacing streams instead of popping"
+                );
+                replace_all_flyline_streams();
+            } else {
+                let head: &bash_symbols::StreamSaver = &*bash_symbols::stream_list;
+                let current_input_name =
+                    std::ffi::CStr::from_ptr(head.bash_input.name).to_string_lossy();
+                log::trace!(
+                    "Found stream_list entry with name: {} and type: {:?}",
+                    current_input_name,
+                    head.bash_input.stream_type
+                );
+                bash_symbols::pop_stream();
+            }
         } else {
-            let head: &mut bash_symbols::StreamSaver = &mut *bash_symbols::stream_list;
-            let current_input_name =
-                std::ffi::CStr::from_ptr(head.bash_input.name).to_string_lossy();
-            log::trace!(
-                "Found stream_list entry with name: {} and type: {:?}",
-                current_input_name,
-                head.bash_input.stream_type
-            );
-            bash_symbols::pop_stream();
+            // The unload is happening while bash is reading from a nested input
+            // source (eval, source, command substitution, ...).  Calling
+            // pop_stream() here would pop and free the *wrong* stream (the
+            // nested one), leaving bash to resume reading from a freed stream
+            // or from flyline callbacks after the library is unloaded.  Instead
+            // replace every saved flyline stream with the original readline
+            // stream, so the nested pop afterwards restores a valid stream.
+            replace_saved_flyline_streams();
         }
+    }
+}
+
+#[cfg(not(feature = "pre_bash_4_4"))]
+unsafe fn is_flyline_stream(input: *const bash_symbols::BashInput) -> bool {
+    unsafe {
+        let input = &*input;
+        if !input.name.is_null() {
+            let name = std::ffi::CStr::from_ptr(input.name).to_string_lossy();
+            if name.starts_with("flyline") {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+type ReferenceStream = (
+    Option<bash_symbols::ShCGetFunc>,
+    Option<bash_symbols::ShCUngetFunc>,
+    bash_symbols::StreamType,
+);
+
+/// Find a saved stream that is safe to restore after flyline is unloaded.
+/// flyline's own load pushes the stream it replaced (normally bash readline),
+/// so the first non-flyline entry on the saved-stream stack is the reference.
+#[cfg(not(feature = "pre_bash_4_4"))]
+unsafe fn find_reference_stream() -> Option<ReferenceStream> {
+    unsafe {
+        let mut current = bash_symbols::stream_list;
+        while !current.is_null() {
+            let node = &*current;
+            if !is_flyline_stream(&raw const node.bash_input) {
+                return Some((
+                    node.bash_input.getter,
+                    node.bash_input.ungetter,
+                    node.bash_input.stream_type,
+                ));
+            }
+            current = node.next;
+        }
+        None
+    }
+}
+
+#[cfg(not(feature = "pre_bash_4_4"))]
+unsafe fn replace_stream_with_reference(
+    input: *mut bash_symbols::BashInput,
+    reference: ReferenceStream,
+) {
+    unsafe {
+        let input = &mut *input;
+        if !input.name.is_null() {
+            bash_symbols::locked_xfree(input.name as *mut libc::c_void);
+        }
+        input.stream_type = reference.2;
+        input.getter = reference.0;
+        input.ungetter = reference.1;
+        // The reference stream (readline stdin) does not use `location`; a null
+        // location is safe for st_stdin and avoids sharing freed string memory.
+        input.location = std::mem::zeroed();
+        input.name = bash_symbols::locked_xmalloc_cstr(c"readline stdin");
+    }
+}
+
+#[cfg(not(feature = "pre_bash_4_4"))]
+unsafe fn replace_saved_flyline_streams() {
+    unsafe {
+        let reference = match find_reference_stream() {
+            Some(reference) => reference,
+            None => {
+                log::error!(
+                    "flyline unload: no safe reference stream found; cannot replace saved flyline streams"
+                );
+                return;
+            }
+        };
+        let mut current = bash_symbols::stream_list;
+        let mut replaced = 0;
+        while !current.is_null() {
+            let node = &mut *current;
+            if is_flyline_stream(&raw const node.bash_input) {
+                replace_stream_with_reference(&raw mut node.bash_input, reference);
+                replaced += 1;
+            }
+            current = node.next;
+        }
+        if replaced > 0 {
+            log::info!("Replaced {replaced} saved flyline input stream(s) with readline");
+        }
+    }
+}
+
+#[cfg(not(feature = "pre_bash_4_4"))]
+unsafe fn replace_all_flyline_streams() {
+    unsafe {
+        replace_saved_flyline_streams();
+        if is_flyline_stream(&raw const bash_symbols::bash_input) {
+            let reference = match find_reference_stream() {
+                Some(reference) => reference,
+                None => {
+                    log::error!(
+                        "flyline unload: no safe reference stream found; cannot replace current flyline stream"
+                    );
+                    return;
+                }
+            };
+            replace_stream_with_reference(&raw mut bash_symbols::bash_input, reference);
+            log::info!("Replaced current flyline input stream with readline");
+        }
+    }
+}
+
+/// Finish a teardown that was deferred because `enable -d flyline` ran while
+/// flyline code was on the call stack.  Called from flyline_get_char() after
+/// the instance borrow has ended, so dropping the instance is safe.
+#[cfg(not(feature = "pre_bash_4_4"))]
+unsafe fn finish_deferred_unload() {
+    log::info!("finishing deferred flyline unload");
+    let had_instance = FLYLINE_INSTANCE_PTR
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()
+        .is_some();
+    if !had_instance {
+        return;
+    }
+
+    unsafe {
+        if is_flyline_stream(&raw const bash_symbols::bash_input) {
+            if bash_symbols::stream_list.is_null() {
+                bash_symbols::bash_input.stream_type = bash_symbols::StreamType::None;
+                bash_symbols::with_input_from_stdin();
+            } else if is_flyline_stream(&raw const (*bash_symbols::stream_list).bash_input) {
+                replace_all_flyline_streams();
+            } else {
+                bash_symbols::pop_stream();
+            }
+        } else {
+            replace_saved_flyline_streams();
+        }
+    }
+}
+
+fn get_library_path() -> Option<std::ffi::CString> {
+    unsafe {
+        let mut info = std::mem::zeroed::<Dl_info>();
+        let addr = flyline_load_common as *const libc::c_void;
+        if dladdr(addr, &mut info) != 0 && !info.dli_fname.is_null() {
+            let path = std::ffi::CStr::from_ptr(info.dli_fname);
+            return Some(path.to_owned());
+        }
+    }
+    None
+}
+
+/// Add a reference to the currently loaded flyline shared object so bash's
+/// `enable -d` dlclose() does not unmap the library while our code is running.
+#[cfg(not(feature = "pre_bash_4_4"))]
+fn keep_library_loaded() {
+    let Some(path) = get_library_path() else {
+        log::error!("flyline unload: could not determine library path to keep it loaded");
+        return;
+    };
+    unsafe {
+        let handle = libc::dlopen(path.as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD);
+        if handle.is_null() {
+            let err = std::ffi::CStr::from_ptr(libc::dlerror()).to_string_lossy();
+            log::error!("flyline unload: failed to keep library loaded: {err}");
+        } else {
+            log::info!("Kept flyline library loaded while deferring unload");
+            *KEPT_LIBRARY_HANDLE
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = Some(DlHandle(handle));
+        }
+    }
+}
+
+/// Release the extra dlopen() reference added by keep_library_loaded().
+/// Called when the library is loaded again, at which point bash already holds
+/// a fresh reference, so the library stays mapped.
+fn release_kept_library_reference() {
+    if let Some(DlHandle(handle)) = KEPT_LIBRARY_HANDLE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()
+    {
+        unsafe {
+            libc::dlclose(handle);
+        }
+        log::info!("Released kept flyline library reference on reload");
     }
 }
 

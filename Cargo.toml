@@ -14,7 +14,7 @@ crate-type = ["cdylib"]
 mimalloc = { version = "0.1.52", default-features = false, features = ["local_dynamic_tls"] }
 clap = { version = "4.6.1", features = ["derive"] }
 clap_complete = { version = "4.6.3", features = ["unstable-dynamic"] }
-ratatui = { git = "https://github.com/HalFrgrd/ratatui.git", rev = "99afe70184dd50483e0b7c0f6afa515c511af06b", default-features = false, features = ["termina", "unstable-rendered-line-info", "unstable-backend-writer", "serde", "macros"] }
+ratatui = { path = "vendor/ratatui/ratatui", default-features = false, features = ["termina", "unstable-rendered-line-info", "unstable-backend-writer", "serde", "macros"] }
 termina = { git = "https://github.com/HalFrgrd/termina.git", rev = "529aeb6b65660d642af221f4f6a09b7e4fc51213" }
 chrono = { version = "0.4" }
 serde = { version = "1", features = ["derive"] }
@@ -71,3 +71,13 @@ dockerfile = "docker/cross/i686-linux-android.Dockerfile"
 
 [patch.crates-io]
 termina = { git = "https://github.com/HalFrgrd/termina.git", rev = "529aeb6b65660d642af221f4f6a09b7e4fc51213" }
+
+# Pin every crate from the HalFrgrd/ratatui fork (including transitive uses
+# such as ansi-to-tui's ratatui-core) to the local vendored copy, which carries
+# a fix for wide-character (CJK) rendering in the inline viewport.
+[patch."https://github.com/HalFrgrd/ratatui.git"]
+ratatui = { path = "vendor/ratatui/ratatui" }
+ratatui-core = { path = "vendor/ratatui/ratatui-core" }
+ratatui-macros = { path = "vendor/ratatui/ratatui-macros" }
+ratatui-widgets = { path = "vendor/ratatui/ratatui-widgets" }
+ratatui-termina = { path = "vendor/ratatui/ratatui-termina" }

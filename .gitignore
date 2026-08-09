@@ -5,3 +5,7 @@ target/
 docker_build/
 **/.antigravitycli/
 .vscode/
+/dump.log
+/tmux-client-*.log
+/tmux-out-*.log
+/tmux-server-*.log

@@ -24,6 +24,8 @@ use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
 #[cfg(not(test))]
 use std::time::SystemTime;
+#[cfg(not(test))]
+use std::time::{Duration, Instant};
 
 #[cfg(not(test))]
 fn with_redirected_stdout<F, R>(func: F) -> (R, String)
@@ -114,20 +116,22 @@ impl CommandWordInfo {
 
     pub fn to_description(&self) -> String {
         match self {
-            CommandWordInfo::Unknown { .. } => "unknown".to_string(),
-            CommandWordInfo::Alias { expansion, .. } => format!("alias: {}", expansion),
+            CommandWordInfo::Unknown { .. } => crate::t!("unknown").to_string(),
+            CommandWordInfo::Alias { expansion, .. } => {
+                crate::i18n::translate_fmt(crate::t!("alias: {}"), &[expansion.clone()])
+            }
             CommandWordInfo::Keyword { command, usage } => {
                 if let Some(u) = usage {
-                    format!("keyword: {}", u)
+                    crate::i18n::translate_fmt(crate::t!("keyword: {}"), &[u.clone()])
                 } else {
-                    format!("keyword: {}", command)
+                    crate::i18n::translate_fmt(crate::t!("keyword: {}"), &[command.clone()])
                 }
             }
             CommandWordInfo::Builtin { command, usage } => {
                 if let Some(u) = usage {
-                    format!("builtin: {}", u)
+                    crate::i18n::translate_fmt(crate::t!("builtin: {}"), &[u.clone()])
                 } else {
-                    format!("builtin: {}", command)
+                    crate::i18n::translate_fmt(crate::t!("builtin: {}"), &[command.clone()])
                 }
             }
             // Most of them are files so this cleans things up
@@ -135,10 +139,17 @@ impl CommandWordInfo {
             CommandWordInfo::Function {
                 source_file, line, ..
             } => match (source_file, line) {
-                (Some(file), Some(l)) => format!("function {}:{}", file, l),
-                (Some(file), None) => format!("function {}", file),
-                (None, Some(l)) => format!("function :{}", l),
-                (None, None) => "function".to_string(),
+                (Some(file), Some(l)) => crate::i18n::translate_fmt(
+                    crate::t!("function {}:{}"),
+                    &[file.clone(), l.to_string()],
+                ),
+                (Some(file), None) => {
+                    crate::i18n::translate_fmt(crate::t!("function {}"), &[file.clone()])
+                }
+                (None, Some(l)) => {
+                    crate::i18n::translate_fmt(crate::t!("function :{}"), &[l.to_string()])
+                }
+                (None, None) => crate::t!("function").to_string(),
             },
         }
     }
@@ -296,14 +307,64 @@ fn get_command_info_uncached(cmd: &str) -> CommandWordInfo {
 
 static CALL_TYPE_CACHE: Mutex<Option<HashMap<String, CommandWordInfo>>> = Mutex::new(None);
 
+/// Commands longer than this are almost certainly not resolvable commands
+/// (they cannot be a single path component on any real filesystem) and
+/// querying `type` for them is a pure waste: it makes Bash walk PATH on every
+/// keystroke while the user is editing/deleting a long word.
+const COMMAND_INFO_MAX_CMD_LEN: usize = 128;
+
+/// Upper bound for the command-info cache so that rapid editing of a long
+/// word (e.g. holding Backspace) cannot grow the cache without limit.
+const COMMAND_INFO_CACHE_MAX_ENTRIES: usize = 4096;
+
+#[cfg(not(test))]
+/// When the user is rapidly editing one word (typing or holding Backspace),
+/// every keystroke produces a brand-new command string that misses the cache
+/// and would trigger a full Bash `type` lookup.  On systems with a huge PATH
+/// (WSL with Windows directories) each lookup can take ~100ms, which turns
+/// holding Backspace into a stutter.  Only run a `type` lookup after the user
+/// has paused for a moment; while keys are arriving faster than this, render
+/// the word as unknown and let the next pause refresh it.
+#[cfg(not(test))]
+const COMMAND_INFO_QUERY_COOLDOWN: Duration = Duration::from_millis(800);
+
+#[cfg(not(test))]
+static LAST_COMMAND_INFO_QUERY: Mutex<Option<Instant>> = Mutex::new(None);
+
+#[cfg(not(test))]
+fn command_info_should_query() -> bool {
+    let now = Instant::now();
+    let mut last = LAST_COMMAND_INFO_QUERY.lock().unwrap();
+    if last.is_some_and(|t| now.duration_since(t) < COMMAND_INFO_QUERY_COOLDOWN) {
+        false
+    } else {
+        *last = Some(now);
+        true
+    }
+}
+
 #[cfg(not(test))]
 pub fn get_command_info(cmd: &str) -> CommandWordInfo {
+    if cmd.len() > COMMAND_INFO_MAX_CMD_LEN {
+        return CommandWordInfo::Unknown {
+            command: cmd.to_string(),
+        };
+    }
+
     let mut cache_guard = CALL_TYPE_CACHE.lock().unwrap();
     let cache = cache_guard.get_or_insert_with(HashMap::new);
 
     if let Some(res) = cache.get(cmd) {
         res.clone()
     } else {
+        if !command_info_should_query() {
+            return CommandWordInfo::Unknown {
+                command: cmd.to_string(),
+            };
+        }
+        if cache.len() >= COMMAND_INFO_CACHE_MAX_ENTRIES {
+            cache.clear();
+        }
         let result = get_command_info_uncached(cmd);
         cache.insert(cmd.to_string(), result.clone());
         result

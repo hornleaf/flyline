@@ -996,15 +996,20 @@ impl Contents {
         let mut lines = Vec::new();
         for paragraph in message.lines() {
             let mut current_line = String::new();
+            let mut current_line_width = 0usize;
             for word in paragraph.split_whitespace() {
+                let word_width = UnicodeWidthStr::width(word);
                 if current_line.is_empty() {
                     current_line = word.to_string();
-                } else if current_line.len() + 1 + word.len() <= max_width {
+                    current_line_width = word_width;
+                } else if current_line_width + 1 + word_width <= max_width {
                     current_line.push(' ');
                     current_line.push_str(word);
+                    current_line_width += 1 + word_width;
                 } else {
                     lines.push(current_line);
                     current_line = word.to_string();
+                    current_line_width = word_width;
                 }
             }
             if !current_line.is_empty() {
@@ -1013,7 +1018,7 @@ impl Contents {
         }
 
         let popup_height = lines.len() + 2;
-        let popup_width = lines.iter().map(|l| l.len()).max().unwrap_or(0) + 2;
+        let popup_width = lines.iter().map(|l| l.width()).max().unwrap_or(0) + 2;
 
         let y = (y_start as usize).min((max_height as usize).saturating_sub(popup_height)) as u16;
         let x = (x_start as usize).min((self.width as usize).saturating_sub(popup_width)) as u16;
@@ -1049,9 +1054,9 @@ impl Contents {
     ) {
         let max_width = entries
             .iter()
-            .map(|(s, _)| s.len())
-            .chain(extra_entries.iter().map(|(s, _)| s.len()))
-            .chain(info_lines.iter().map(|s| s.len()))
+            .map(|(s, _)| s.width())
+            .chain(extra_entries.iter().map(|(s, _)| s.width()))
+            .chain(info_lines.iter().map(|s| s.width()))
             .max()
             .unwrap_or(0);
         let popup_width = (max_width + 2) as u16; // 1 space padding on left, 1 space padding on right
@@ -1088,7 +1093,8 @@ impl Contents {
                 style
             };
 
-            let padded_text = format!(" {:width$} ", text, width = max_width);
+            let pad = max_width.saturating_sub(text.width());
+            let padded_text = format!(" {}{} ", text, " ".repeat(pad));
             self.write_tagged_span(&TaggedSpan::new(
                 Span::styled(padded_text, entry_style),
                 *tag,
@@ -1124,7 +1130,8 @@ impl Contents {
                 style
             };
 
-            let padded_text = format!(" {:width$} ", text, width = max_width);
+            let pad = max_width.saturating_sub(text.width());
+            let padded_text = format!(" {}{} ", text, " ".repeat(pad));
             self.write_tagged_span(&TaggedSpan::new(
                 Span::styled(padded_text, entry_style),
                 *tag,
@@ -1136,7 +1143,8 @@ impl Contents {
             let row = info_start_row + i as u16;
             self.move_cursor_to(row, x);
 
-            let padded_line = format!(" {:width$} ", line, width = max_width);
+            let pad = max_width.saturating_sub(line.width());
+            let padded_line = format!(" {}{} ", line, " ".repeat(pad));
             self.write_tagged_span(&TaggedSpan::new(
                 Span::styled(padded_line, secondary_style),
                 Tag::RightClickMenu,
@@ -1562,6 +1570,26 @@ mod tests {
     }
 
     #[test]
+    fn test_draw_popup_wide_characters_measure_display_width() {
+        let mut contents = Contents::new(40);
+        for _ in 0..4 {
+            contents.increase_buf_single_row();
+        }
+        contents.draw_popup("你好世界", 1, 1, 10, Style::default(), Tag::Normal);
+
+        // Each CJK character is 3 bytes but 2 display columns.  The popup
+        // border must reflect the display width (4 chars × 2 = 8 columns,
+        // plus 2 padding columns = 10 total), not the byte length (12 + 2).
+        let border: String = contents.buf[1].iter().map(|c| c.cell.symbol()).collect();
+        let dash_count = border.chars().filter(|&c| c == '─').count();
+        assert_eq!(dash_count, 8);
+
+        let line: String = contents.buf[2].iter().map(|c| c.cell.symbol()).collect();
+        let compact: String = line.chars().filter(|&c| c != ' ').collect();
+        assert!(compact.contains("你好世界"));
+    }
+
+    #[test]
     fn test_draw_menu() {
         let mut contents = Contents::new(40);
         for _ in 0..10 {
@@ -1605,5 +1633,55 @@ mod tests {
                 "                                        ".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn test_draw_menu_chinese_widths() {
+        let mut contents = Contents::new(40);
+        for _ in 0..10 {
+            contents.increase_buf_single_row();
+        }
+        let entries = [
+            ("⎘ 复制（选区）", Tag::RightClickCopy),
+            ("↶ 撤销", Tag::RightClickUndo),
+            ("⎗ 粘贴", Tag::RightClickPaste),
+        ];
+        let info_lines = ["切换鼠标捕获", "按 Escape 键。"];
+        contents.draw_menu(
+            &entries,
+            &[],
+            None,
+            false,
+            1,
+            5,
+            15,
+            Style::default(),
+            Style::default(),
+            &info_lines,
+            Style::default(),
+        );
+
+        let max_width = entries
+            .iter()
+            .map(|(s, _)| s.width())
+            .chain(info_lines.iter().map(|s| s.width()))
+            .max()
+            .unwrap();
+        let popup_width = max_width + 2;
+        let x_start = 5usize;
+        for row in &contents.buf {
+            for col in (x_start + popup_width)..40 {
+                assert_eq!(row[col].cell.symbol(), " ");
+            }
+        }
+
+        // Entry/info rows must occupy exactly the popup width so their
+        // trailing border cell is never overwritten. (Skip the separator row,
+        // which is deliberately filled with ─.)
+        for row_idx in [2usize, 3, 5, 6] {
+            let row = &contents.buf[row_idx];
+            assert_eq!(row[x_start].cell.symbol(), " ");
+            assert_eq!(row[x_start + popup_width - 1].cell.symbol(), " ");
+        }
     }
 }

@@ -1324,6 +1324,9 @@ impl MouseEventAction {
                 MouseActionOutput::dont_update()
             }
             MouseEventAction::RightClickMenuOpen => {
+                if !app.settings.right_click_menu {
+                    return MouseActionOutput::dont_update();
+                }
                 let content_row = if let Some(ref drawn) = app.last_contents {
                     drawn.term_em_row_to_content_row(mouse.row).max(0) as u16
                 } else {

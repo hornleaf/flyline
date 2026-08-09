@@ -455,7 +455,7 @@ impl<'a> App<'a> {
                 {
                     let red = Style::default().fg(Color::Red).slow_blink();
                     let escape_hint = TaggedLine::from(vec![TaggedSpan::new(
-                        Span::styled("Press Escape to re-enable mouse mode.", red),
+                        Span::styled(crate::t!("Press Escape to re-enable mouse mode."), red),
                         Tag::Tutorial,
                     )]);
                     for tagged_span in &escape_hint.spans {
@@ -1034,7 +1034,10 @@ impl<'a> App<'a> {
                     Tag::Normal,
                 ));
                 content.write_tagged_span(&TaggedSpan::new(
-                    Span::styled("  Proceed? ", self.settings.colour_palette.normal_text()),
+                    Span::styled(
+                        crate::t!("  Proceed? "),
+                        self.settings.colour_palette.normal_text(),
+                    ),
                     Tag::Normal,
                 ));
 
@@ -1048,7 +1051,7 @@ impl<'a> App<'a> {
                     Style::default().fg(Color::Green)
                 };
                 content.write_tagged_span(&TaggedSpan::new(
-                    Span::styled(" [Yes] ", yes_style),
+                    Span::styled(crate::t!(" [Yes] "), yes_style),
                     Tag::FlycompYes,
                 ));
 
@@ -1064,7 +1067,7 @@ impl<'a> App<'a> {
                     Style::default().fg(Color::Red)
                 };
                 content.write_tagged_span(&TaggedSpan::new(
-                    Span::styled(" [No] ", no_style),
+                    Span::styled(crate::t!(" [No] "), no_style),
                     Tag::FlycompNo,
                 ));
 
@@ -1080,7 +1083,7 @@ impl<'a> App<'a> {
                     Style::default().fg(Color::Red)
                 };
                 content.write_tagged_span(&TaggedSpan::new(
-                    Span::styled(" [No, don't ask again] ", dont_ask_style),
+                    Span::styled(crate::t!(" [No, don't ask again] "), dont_ask_style),
                     Tag::FlycompDontAsk,
                 ));
                 content.newline();
@@ -1436,36 +1439,36 @@ impl<'a> App<'a> {
         if let Some(popup_pos) = self.right_click_popup_pos {
             let copy_label = if let Some(ref target) = self.right_click_copy_target {
                 match target {
-                    RightClickCopyTarget::Selection(_) => "⎘ Copy (selection)".to_string(),
-                    RightClickCopyTarget::Buffer(_) => "⎘ Copy (buffer)".to_string(),
-                    RightClickCopyTarget::HistoryEntry(_) => "⎘ Copy (history entry)".to_string(),
-                    RightClickCopyTarget::Cwd(_) => "⎘ Copy (cwd)".to_string(),
-                    RightClickCopyTarget::Suggestion(_) => "⎘ Copy (suggestion)".to_string(),
-                    RightClickCopyTarget::AiResult(_) => "⎘ Copy (AI result)".to_string(),
-                    RightClickCopyTarget::Clipboard(_) => "⎘ Copy (clipboard)".to_string(),
+                    RightClickCopyTarget::Selection(_) => crate::t!("⎘ Copy (selection)"),
+                    RightClickCopyTarget::Buffer(_) => crate::t!("⎘ Copy (buffer)"),
+                    RightClickCopyTarget::HistoryEntry(_) => crate::t!("⎘ Copy (history entry)"),
+                    RightClickCopyTarget::Cwd(_) => crate::t!("⎘ Copy (cwd)"),
+                    RightClickCopyTarget::Suggestion(_) => crate::t!("⎘ Copy (suggestion)"),
+                    RightClickCopyTarget::AiResult(_) => crate::t!("⎘ Copy (AI result)"),
+                    RightClickCopyTarget::Clipboard(_) => crate::t!("⎘ Copy (clipboard)"),
                 }
             } else {
-                "⎘ Copy".to_string()
+                crate::t!("⎘ Copy")
             };
 
             let cut_label = if self.buffer.selected_text().is_some() {
-                "✂ Cut (selection)".to_string()
+                crate::t!("✂ Cut (selection)")
             } else {
-                "✂ Cut (buffer)".to_string()
+                crate::t!("✂ Cut (buffer)")
             };
 
             let entries = [
-                (copy_label.as_str(), Tag::RightClickCopy),
-                (cut_label.as_str(), Tag::RightClickCut),
-                ("⎗ Paste", Tag::RightClickPaste),
-                ("↶ Undo", Tag::RightClickUndo),
-                ("↷ Redo", Tag::RightClickRedo),
+                (copy_label, Tag::RightClickCopy),
+                (cut_label, Tag::RightClickCut),
+                (crate::t!("⎗ Paste"), Tag::RightClickPaste),
+                (crate::t!("↶ Undo"), Tag::RightClickUndo),
+                (crate::t!("↷ Redo"), Tag::RightClickRedo),
             ];
-            let extra_entries = [("Run Tutorial", Tag::RightClickRunTutorial)];
+            let extra_entries = [(crate::t!("Run Tutorial"), Tag::RightClickRunTutorial)];
             let selected_tag = self.mouse_state.last_mouse_over_cell_semantic;
             let style = self.settings.colour_palette.right_click_menu();
             let selected_style = Palette::convert_to_highlighted(style);
-            let info_lines = ["Toggle mouse capture", "with Escape."];
+            let info_lines = [crate::t!("Toggle mouse capture"), crate::t!("with Escape.")];
             let secondary_style = style.fg(ratatui::style::Color::DarkGray);
             let is_left_button_down = self.mouse_state.is_left_button_down();
 
@@ -1523,6 +1526,14 @@ impl<'a> App<'a> {
                     for (x, tagged_cell) in row.iter().enumerate() {
                         if x < frame_area.width as usize {
                             let mut cell = tagged_cell.cell.clone();
+                            if tagged_cell.tag == Tag::MultiWidthContinuation {
+                                // Wide graphemes (CJK, emoji) occupy two terminal
+                                // columns.  Mark the continuation cell with an
+                                // explicit empty symbol so the inline-viewport
+                                // renderer can skip it instead of emitting a
+                                // space that shifts every following column.
+                                cell.set_symbol("");
+                            }
                             if needs_full_redraw {
                                 cell.set_diff_option(ratatui::buffer::CellDiffOption::AlwaysUpdate);
                             }
@@ -1843,10 +1854,13 @@ impl<'a> App<'a> {
                     let suggestion_width = main_text_width;
                     for col_idx in (x as usize + 1)..(x as usize + 1 + inner_width) {
                         let cell = &mut content.buf[current_y as usize][col_idx];
-                        if cell.cell.symbol().is_empty() {
+                        let is_continuation = cell.tag == Tag::MultiWidthContinuation;
+                        if cell.cell.symbol().is_empty() && !is_continuation {
                             cell.cell.set_symbol(" ");
                         }
-                        cell.tag = tag;
+                        if !is_continuation {
+                            cell.tag = tag;
+                        }
                         let relative_col = col_idx - (x as usize + 1);
                         if relative_col < suggestion_width {
                             cell.cell
@@ -1892,15 +1906,18 @@ impl<'a> App<'a> {
                     for row_idx in item_start_row..=item_end_row {
                         for col_idx in (x as usize + 1)..(x as usize + 1 + inner_width) {
                             let cell = &mut content.buf[row_idx as usize][col_idx];
+                            let is_continuation = cell.tag == Tag::MultiWidthContinuation;
                             if !cell.cell.symbol().is_empty()
                                 && !cell.cell.style().add_modifier.contains(Modifier::REVERSED)
                             {
                                 in_description = true;
                             }
-                            if cell.cell.symbol().is_empty() {
+                            if cell.cell.symbol().is_empty() && !is_continuation {
                                 cell.cell.set_symbol(" ");
                             }
-                            cell.tag = tag;
+                            if !is_continuation {
+                                cell.tag = tag;
+                            }
                             if in_description {
                                 cell.cell
                                     .set_style(settings.colour_palette.secondary_text());

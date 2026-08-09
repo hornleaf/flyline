@@ -219,10 +219,28 @@ fn detect_kitty() -> bool {
     *IS_KITTY
 }
 
+/// Parse the `FLYLINE_CURSOR_BACKEND` environment variable value.
+/// Returns `None` for unknown values (fall back to the default logic).
+fn parse_backend_env(value: &str) -> Option<CursorBackend> {
+    match value.to_ascii_lowercase().as_str() {
+        "terminal" | "native" | "off" | "false" | "0" => Some(CursorBackend::Terminal),
+        "flyline" | "custom" | "on" | "true" | "1" => Some(CursorBackend::Flyline),
+        _ => None,
+    }
+}
+
 impl CursorConfig {
     /// Resolves the cursor backend to use, defaulting to `Terminal` on Kitty and `Flyline` otherwise.
     pub fn backend(&self) -> CursorBackend {
         self.backend.unwrap_or_else(|| {
+            // Allow a global opt-out (or opt-in) via the environment without
+            // touching the shell configuration, e.g.
+            //   FLYLINE_CURSOR_BACKEND=terminal
+            if let Some(value) = crate::bash_funcs::get_envvar_value("FLYLINE_CURSOR_BACKEND")
+                && let Some(backend) = parse_backend_env(&value)
+            {
+                return backend;
+            }
             if detect_kitty() {
                 CursorBackend::Terminal
             } else {
@@ -239,6 +257,48 @@ impl CursorConfig {
     /// Returns `true` if no backend has been explicitly configured.
     pub fn is_backend_unset(&self) -> bool {
         self.backend.is_none()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_terminal_backend_env_values() {
+        for value in ["terminal", "TERMINAL", "native", "off", "false", "0"] {
+            assert_eq!(
+                parse_backend_env(value),
+                Some(CursorBackend::Terminal),
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn parses_flyline_backend_env_values() {
+        for value in ["flyline", "FLYLINE", "custom", "on", "true", "1"] {
+            assert_eq!(
+                parse_backend_env(value),
+                Some(CursorBackend::Flyline),
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn ignores_unknown_backend_env_values() {
+        assert_eq!(parse_backend_env("banana"), None);
+        assert_eq!(parse_backend_env(""), None);
+    }
+
+    #[test]
+    fn explicit_backend_overrides_environment() {
+        let config = CursorConfig {
+            backend: Some(CursorBackend::Flyline),
+            ..CursorConfig::default()
+        };
+        assert_eq!(config.backend(), CursorBackend::Flyline);
     }
 }
 

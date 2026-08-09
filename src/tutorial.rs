@@ -8,6 +8,7 @@ use crate::content_builder::{ClipboardTypes, Tag, TaggedLine, TaggedSpan};
 use crate::content_utils;
 use crate::palette::Palette;
 use crate::shell_integration;
+use crate::t;
 use crate::{bash_funcs, settings};
 
 /// Large block-art logo displayed on the welcome screen.
@@ -74,11 +75,12 @@ pub fn generate_welcome_logo_lines(term_width: u16) -> Vec<Line<'static>> {
 }
 
 pub fn generate_welcome_action_line(now: std::time::Instant, width: u16) -> (u16, Line<'static>) {
-    const TEXT: &str = "Press Enter to start the tutorial";
+    let text = t!("Press Enter to start the tutorial");
     static START_TIME: LazyLock<std::time::Instant> = LazyLock::new(std::time::Instant::now);
 
-    let line = content_utils::gaussian_wave_animated(TEXT, now, *START_TIME);
-    let offset = (width + 32).saturating_sub(TEXT.len() as u16) / 2;
+    let line = content_utils::gaussian_wave_animated(text, now, *START_TIME);
+    let text_width = UnicodeWidthStr::width(text) as u16;
+    let offset = (width + 32).saturating_sub(text_width) / 2;
 
     (offset, line)
 }
@@ -237,21 +239,26 @@ pub fn generate_tutorial_text(
             return None;
         }
         TutorialStep::TutorialsTutorial => {
-            lines.push(tl(Span::styled("How to use this tutorial", heading_style)));
+            lines.push(tl(Span::styled(
+                t!("How to use this tutorial"),
+                heading_style,
+            )));
             lines.push(empty());
             lines.push(tl(Span::styled(
-                "• Click the prev and next buttons to navigate.",
+                t!("• Click the prev and next buttons to navigate."),
                 text_style,
             )));
             lines.push(TaggedLine::from(vec![
-                ts_text("• Press "),
+                ts_text(t!("• Press ")),
                 ts_key("Enter"),
-                ts_text(" with an empty command buffer to move to the next tutorial screen."),
+                ts_text(t!(
+                    " with an empty command buffer to move to the next tutorial screen."
+                )),
             ]));
             lines.push(TaggedLine::from(vec![
                 TaggedSpan::new(
                     Span::styled(
-                        "• Click on underlined text to copy it to your clipboard and command buffer: ",
+                        t!("• Click on underlined text to copy it to your clipboard and command buffer: "),
                         text_style,
                     ),
                     Tag::Tutorial,
@@ -262,25 +269,25 @@ pub fn generate_tutorial_text(
                 ),
             ]));
             lines.push(tl(Span::styled(
-                "• Exit the tutorial at any time with `flyline run-tutorial false`.",
+                t!("• Exit the tutorial at any time with `flyline run-tutorial false`."),
                 text_style,
             )));
             lines.push(tl(Span::styled(
-                "• Remember to append settings to your `~/.bashrc` so they persist!",
+                t!("• Remember to append settings to your `~/.bashrc` so they persist!"),
                 text_style,
             )));
         }
         TutorialStep::RecommendedSettings => {
-            lines.push(tl(Span::styled("Recommended Settings", heading_style)));
+            lines.push(tl(Span::styled(t!("Recommended Settings"), heading_style)));
             lines.push(tl(Span::styled(
-                "Flyline will detect your terminal and suggest optimal settings for the best experience:",
+                t!("Flyline will detect your terminal and suggest optimal settings for the best experience:"),
                 text_style,
             )));
             lines.push(TaggedLine::from_line(Line::from(""), Tag::Tutorial));
 
             if is_vscode() {
                 lines.push(tl(Span::styled(
-                    "You are running in VS Code. For the best experience, set these in settings.json (try ctrl+clicking the links):",
+                    t!("You are running in VS Code. For the best experience, set these in settings.json (try ctrl+clicking the links):"),
                     text_style,
                 )));
                 lines.push(tl(Span::styled(
@@ -300,7 +307,7 @@ pub fn generate_tutorial_text(
 
             if is_ghostty() {
                 lines.push(tl(Span::styled(
-                    "You are running in Ghostty. Consider setting this configuration to prevent mouse click conflicts:",
+                    t!("You are running in Ghostty. Consider setting this configuration to prevent mouse click conflicts:"),
                     text_style,
                 )));
                 lines.push(tl(Span::styled(
@@ -312,20 +319,20 @@ pub fn generate_tutorial_text(
 
             if detect_kitty_keyboard_support() {
                 lines.push(tl(Span::styled(
-                    "✅ Your terminal supports the Kitty extended keyboard protocol.",
+                    t!("✅ Your terminal supports the Kitty extended keyboard protocol."),
                     text_style,
                 )));
             } else {
                 lines.push(tl(Span::styled(
-                    "⚠ Your terminal may not support the Kitty extended keyboard protocol.",
+                    t!("⚠ Your terminal may not support the Kitty extended keyboard protocol."),
                     text_style,
                 )));
                 lines.push(tl(Span::styled(
-                    "  Consider using a terminal emulator that does (kitty, ghostty, wezterm, foot, rio).",
+                    t!("  Consider using a terminal emulator that does (kitty, ghostty, wezterm, foot, rio)."),
                     text_style,
                 )));
                 lines.push(tl(Span::styled(
-                    "  This enables better key disambiguation for flyline.",
+                    t!("  This enables better key disambiguation for flyline."),
                     text_style,
                 )));
             }
@@ -333,7 +340,7 @@ pub fn generate_tutorial_text(
             if *SHOULD_RECOMMEND_ZSH_HISTORY {
                 lines.push(TaggedLine::from_line(Line::from(""), Tag::Tutorial));
                 lines.push(tl(Span::styled(
-                    "💡 We detected that you use Zsh. Consider loading your Zsh history into flyline:",
+                    t!("💡 We detected that you use Zsh. Consider loading your Zsh history into flyline:"),
                     text_style,
                 )));
                 lines.push(TaggedLine::from(vec![
@@ -351,7 +358,7 @@ pub fn generate_tutorial_text(
             if !rps1_set {
                 lines.push(TaggedLine::from_line(Line::from(""), Tag::Tutorial));
                 lines.push(tl(Span::styled(
-                    "💡 How about showing the time in your right prompt:",
+                    t!("💡 How about showing the time in your right prompt:"),
                     text_style,
                 )));
                 lines.push(TaggedLine::from(vec![
@@ -361,28 +368,28 @@ pub fn generate_tutorial_text(
             }
         }
         TutorialStep::MouseMode => {
-            lines.push(tl(Span::styled("Mouse Capture", heading_style)));
+            lines.push(tl(Span::styled(t!("Mouse Capture"), heading_style)));
             lines.push(empty());
             lines.push(tl(Span::styled(
-                "Flyline needs to capture mouse events so that you can click to move your cursor, select suggestions, and hover for tooltips.",
+                t!("Flyline needs to capture mouse events so that you can click to move your cursor, select suggestions, and hover for tooltips."),
                 text_style,
             )));
             lines.push(empty());
-            lines.push(TaggedLine::from(vec![ts_text(
-                "Disable mouse capture: click above the viewport or scroll.",
-            )]));
+            lines.push(TaggedLine::from(vec![ts_text(t!(
+                "Disable mouse capture: click above the viewport or scroll."
+            ))]));
             lines.push(TaggedLine::from(vec![
-                ts_text("Toggle with "),
+                ts_text(t!("Toggle with ")),
                 ts_key("Escape"),
                 ts_text("."),
             ]));
-            lines.push(TaggedLine::from(vec![ts_text(
-                "Typing enables mouse capture.",
-            )]));
+            lines.push(TaggedLine::from(vec![ts_text(t!(
+                "Typing enables mouse capture."
+            ))]));
 
             lines.push(empty());
             lines.push(tl(Span::styled(
-                "Switch mouse interaction modes with `flyline mouse --mode smart/simple/disabled`.", //NO_FMT
+                t!("Switch mouse interaction modes with `flyline mouse --mode smart/simple/disabled`."), //NO_FMT
                 text_style,
             )));
 
@@ -393,7 +400,7 @@ pub fn generate_tutorial_text(
             {
                 lines.push(TaggedLine::from_line(Line::from(""), Tag::Tutorial));
                 lines.push(tl(Span::styled(
-                    "💡 Consider displaying the mouse capture mode in your right prompt:",
+                    t!("💡 Consider displaying the mouse capture mode in your right prompt:"),
                     text_style,
                 )));
                 lines.push(TaggedLine::from(vec![
@@ -407,46 +414,46 @@ pub fn generate_tutorial_text(
         }
         TutorialStep::TextSelection => {
             lines.push(tl(Span::styled(
-                "Text Selection & Clipboard",
+                t!("Text Selection & Clipboard"),
                 heading_style,
             )));
             lines.push(empty());
             lines.push(tl(Span::styled(
-                "• Select text by dragging the mouse or using Shift + Arrow keys.",
+                t!("• Select text by dragging the mouse or using Shift + Arrow keys."),
                 text_style,
             )));
             lines.push(tl(Span::styled(
-                "• Right-click to open the context menu to Copy, Cut, or Paste.",
+                t!("• Right-click to open the context menu to Copy, Cut, or Paste."),
                 text_style,
             )));
             lines.push(tl(Span::styled(
-                "• You can also right-click a history entry or a prompt folder to copy it directly.",
+                t!("• You can also right-click a history entry or a prompt folder to copy it directly."),
                 text_style,
             )));
             lines.push(empty());
             lines.push(tl(Span::styled(
-                "• Ctrl+X, Ctrl+C, and Ctrl+V work as expected.",
+                t!("• Ctrl+X, Ctrl+C, and Ctrl+V work as expected."),
                 text_style,
             )));
             lines.push(tl(Span::styled(
-                "• Ctrl+C will copy when text is selected and if not, it will cancel your command.",
+                t!("• Ctrl+C will copy when text is selected and if not, it will cancel your command."),
                 text_style,
             )));
         }
         TutorialStep::AutoSuggestions => {
-            lines.push(tl(Span::styled("Auto Suggestions", heading_style)));
+            lines.push(tl(Span::styled(t!("Auto Suggestions"), heading_style)));
             lines.push(empty());
             lines.push(tl(Span::styled(
-                "As you type, flyline shows Intellisense style auto-suggestions based on Bash tab completions.",
+                t!("As you type, flyline shows Intellisense style auto-suggestions based on Bash tab completions."),
                 text_style,
             )));
             lines.push(tl(Span::styled(
-                "Try typing `grep --` and watch suggestions appear.",
+                t!("Try typing `grep --` and watch suggestions appear."),
                 text_style,
             )));
             lines.push(empty());
             lines.push(tl(Span::styled(
-                "You can disable these auto-suggestions by running:",
+                t!("You can disable these auto-suggestions by running:"),
                 text_style,
             )));
             lines.push(TaggedLine::from(vec![
@@ -458,46 +465,49 @@ pub fn generate_tutorial_text(
             ]));
         }
         TutorialStep::FuzzyHistorySearch => {
-            lines.push(tl(Span::styled("Fuzzy History Search", heading_style)));
+            lines.push(tl(Span::styled(t!("Fuzzy History Search"), heading_style)));
             lines.push(empty());
             lines.push(TaggedLine::from(vec![
-                ts_text("Press "),
+                ts_text(t!("Press ")),
                 ts_key("Ctrl+R"),
-                ts_text(" to open fuzzy history search."),
+                ts_text(t!(" to open fuzzy history search.")),
             ]));
             lines.push(TaggedLine::from(vec![
-                ts_text("Type to filter, use "),
-                ts_key("arrow keys"),
+                ts_text(t!("Type to filter, use ")),
+                ts_key(t!("arrow keys")),
                 ts_text(" / "),
                 ts_key("Page Up/Down"),
-                ts_text(" to browse results."),
+                ts_text(t!(" to browse results.")),
             ]));
             lines.push(TaggedLine::from(vec![
-                ts_text("Press "),
+                ts_text(t!("Press ")),
                 ts_key("Enter"),
-                ts_text(" to accept the selected command for editing."),
+                ts_text(t!(" to accept the selected command for editing.")),
             ]));
             lines.push(TaggedLine::from(vec![
-                ts_text("Press "),
+                ts_text(t!("Press ")),
                 ts_key("Escape"),
-                ts_text(" to cancel."),
+                ts_text(t!(" to cancel.")),
             ]));
         }
         TutorialStep::Keybindings => {
-            lines.push(tl(Span::styled("Keybindings", heading_style)));
+            lines.push(tl(Span::styled(t!("Keybindings"), heading_style)));
             lines.push(empty());
             lines.push(TaggedLine::from(vec![
-                ts_text("Run "),
+                ts_text(t!("Run ")),
                 ts_copiable(
                     "flyline key list".to_string(),
                     ClipboardTypes::TutorialKeybindingsList,
                 ),
-                ts_text(" to see all current keybindings."),
+                ts_text(t!(" to see all current keybindings.")),
             ]));
             lines.push(empty());
-            lines.push(tl(Span::styled("Common custom keybindings:", text_style)));
+            lines.push(tl(Span::styled(
+                t!("Common custom keybindings:"),
+                text_style,
+            )));
             lines.push(TaggedLine::from(vec![
-                ts_text("• Accept and immediately run the selected fuzzy history entry (instead of accepting for editing):"),
+                ts_text(t!("• Accept and immediately run the selected fuzzy history entry (instead of accepting for editing):")),
             ]));
             lines.push(TaggedLine::from(vec![
                 TaggedSpan::new(Span::styled("    ", text_style), Tag::Tutorial),
@@ -508,7 +518,9 @@ pub fn generate_tutorial_text(
                 ),
             ]));
             lines.push(TaggedLine::from(vec![
-                ts_text("• Temporarily dismiss an inline history suggestion with "),
+                ts_text(t!(
+                    "• Temporarily dismiss an inline history suggestion with "
+                )),
                 ts_key("Escape"),
                 ts_text(":"),
             ]));
@@ -521,7 +533,7 @@ pub fn generate_tutorial_text(
                 ),
             ]));
             lines.push(TaggedLine::from(vec![
-                ts_text("• Accept an inline history suggestion with "),
+                ts_text(t!("• Accept an inline history suggestion with ")),
                 ts_key("Tab"),
                 ts_text(":"),
             ]));
@@ -534,17 +546,20 @@ pub fn generate_tutorial_text(
             ]));
         }
         TutorialStep::TabSuggestions => {
-            lines.push(tl(Span::styled("Fuzzy Completions", heading_style)));
+            lines.push(tl(Span::styled(t!("Fuzzy Completions"), heading_style)));
             lines.push(empty());
             lines.push(TaggedLine::from(vec![
-                TaggedSpan::new(Span::styled("Type ", text_style), Tag::Tutorial),
+                TaggedSpan::new(
+                    Span::styled(t!("Type "), text_style),
+                    Tag::Tutorial,
+                ),
                 ts_copiable(
                     "grep --".to_string(),
                     ClipboardTypes::TutorialGrep,
                 ),
-                ts_text(" and press "),
+                ts_text(t!(" and press ")),
                 ts_key("Tab"),
-                ts_text(" to trigger completions. If nothing comes up, first set normal Bash completions ("),
+                ts_text(t!(" to trigger completions. If nothing comes up, first set normal Bash completions (")),
                 ts_copiable(
                     "https://github.com/scop/bash-completion".to_string(),
                     ClipboardTypes::TutorialBashCompletion,
@@ -552,31 +567,31 @@ pub fn generate_tutorial_text(
                 TaggedSpan::new(Span::styled(")", text_style), Tag::Tutorial),
             ]));
             lines.push(TaggedLine::from(vec![
-                ts_text("Type to filter suggestions, use "),
-                ts_key("arrow keys"),
-                ts_text(" or your mouse to navigate."),
+                ts_text(t!("Type to filter suggestions, use ")),
+                ts_key(t!("arrow keys")),
+                ts_text(t!(" or your mouse to navigate.")),
             ]));
             lines.push(TaggedLine::from(vec![
-                ts_text("Press "),
+                ts_text(t!("Press ")),
                 ts_key("Enter"),
-                ts_text(" or click a suggestion to accept it."),
+                ts_text(t!(" or click a suggestion to accept it.")),
             ]));
         }
         TutorialStep::ThemeColours => {
-            lines.push(tl(Span::styled("Setting Theme Colours", heading_style)));
+            lines.push(tl(Span::styled(t!("Setting Theme Colours"), heading_style)));
             lines.push(empty());
             lines.push(tl(Span::styled(
-                "Customise your colour theme with the `flyline set-style` command.",
+                t!("Customise your colour theme with the `flyline set-style` command."),
                 text_style,
             )));
-            lines.push(tl(Span::styled("Examples:", text_style)));
+            lines.push(tl(Span::styled(t!("Examples:"), text_style)));
             lines.push(TaggedLine::from(vec![
                 TaggedSpan::new(Span::styled(" ", text_style), Tag::Tutorial),
                 ts_copiable(
                     "flyline set-style --default-theme dark".to_string(),
                     ClipboardTypes::TutorialSetColor1,
                 ),
-                ts_text(" (if your terminal background is dark)"),
+                ts_text(t!(" (if your terminal background is dark)")),
             ]));
             lines.push(TaggedLine::from(vec![
                 TaggedSpan::new(Span::styled(" ", text_style), Tag::Tutorial),
@@ -584,7 +599,7 @@ pub fn generate_tutorial_text(
                     "flyline set-style --default-theme light".to_string(),
                     ClipboardTypes::TutorialSetColor2,
                 ),
-                ts_text(" (if your terminal background is light)"),
+                ts_text(t!(" (if your terminal background is light)")),
             ]));
             lines.push(TaggedLine::from(vec![
                 TaggedSpan::new(Span::styled(" ", text_style), Tag::Tutorial),
@@ -602,48 +617,51 @@ pub fn generate_tutorial_text(
             ]));
             lines.push(empty());
             lines.push(TaggedLine::from(vec![
-                TaggedSpan::new(Span::styled("Run ", text_style), Tag::Tutorial),
+                TaggedSpan::new(Span::styled(t!("Run "), text_style), Tag::Tutorial),
                 ts_copiable(
                     "flyline set-style --help".to_string(),
                     ClipboardTypes::TutorialSetColor5,
                 ),
                 TaggedSpan::new(
-                    Span::styled(" to see all options.", text_style),
+                    Span::styled(t!(" to see all options."), text_style),
                     Tag::Tutorial,
                 ),
             ]));
         }
         TutorialStep::CursorStyleEffects => {
-            lines.push(tl(Span::styled("Cursor Style & Effects", heading_style)));
+            lines.push(tl(Span::styled(
+                t!("Cursor Style & Effects"),
+                heading_style,
+            )));
             lines.push(empty());
             if detect_kitty_keyboard_support() {
                 lines.push(tl(Span::styled(
-                    "⚠ Warning: You are running Kitty. The custom `flyline` cursor backend hides the terminal's native cursor, which stops Kitty from detecting prompt states and prompts you on exit. It is highly recommended to use the `terminal` backend instead.",
+                    t!("⚠ Warning: You are running Kitty. The custom `flyline` cursor backend hides the terminal's native cursor, which stops Kitty from detecting prompt states and prompts you on exit. It is highly recommended to use the `terminal` backend instead."),
                     ratatui::style::Style::default().fg(ratatui::style::Color::Red),
                 )));
                 lines.push(empty());
             }
             lines.push(TaggedLine::from(vec![
-                TaggedSpan::new(Span::styled("Use ", text_style), Tag::Tutorial),
+                TaggedSpan::new(Span::styled(t!("Use "), text_style), Tag::Tutorial),
                 ts_copiable(
                     "flyline set-cursor --help".to_string(),
                     ClipboardTypes::TutorialCursor0,
                 ),
-                ts_text(" to control how the cursor looks and animates."),
+                ts_text(t!(" to control how the cursor looks and animates.")),
             ]));
             lines.push(tl(Span::styled(
-                "Style and effect options require the `flyline` cursor backend. The `terminal` backend leaves cursor rendering to your terminal emulator.",
+                t!("Style and effect options require the `flyline` cursor backend. The `terminal` backend leaves cursor rendering to your terminal emulator."),
                 text_style,
             )));
             lines.push(empty());
-            lines.push(tl(Span::styled("Examples:", text_style)));
+            lines.push(tl(Span::styled(t!("Examples:"), text_style)));
             lines.push(TaggedLine::from(vec![
                 TaggedSpan::new(Span::styled(" ", text_style), Tag::Tutorial),
                 ts_copiable(
                     "flyline set-cursor --backend terminal".to_string(),
                     ClipboardTypes::TutorialCursor1,
                 ),
-                ts_text(" (your terminal emulator will render the cursor)"),
+                ts_text(t!(" (your terminal emulator will render the cursor)")),
             ]));
             lines.push(TaggedLine::from(vec![
                 TaggedSpan::new(Span::styled(" ", text_style), Tag::Tutorial),
@@ -651,7 +669,7 @@ pub fn generate_tutorial_text(
                     "flyline set-cursor --backend flyline --style \"reverse\"".to_string(),
                     ClipboardTypes::TutorialCursor2,
                 ),
-                ts_text(" (invert the character under the cursor)"),
+                ts_text(t!(" (invert the character under the cursor)")),
             ]));
             lines.push(TaggedLine::from(vec![
                 TaggedSpan::new(Span::styled(" ", text_style), Tag::Tutorial),
@@ -660,7 +678,7 @@ pub fn generate_tutorial_text(
                         .to_string(),
                     ClipboardTypes::TutorialCursor3,
                 ),
-                ts_text(" (custom foreground, background, and style)"),
+                ts_text(t!(" (custom foreground, background, and style)")),
             ]));
             lines.push(TaggedLine::from(vec![
                 TaggedSpan::new(Span::styled(" ", text_style), Tag::Tutorial),
@@ -669,7 +687,7 @@ pub fn generate_tutorial_text(
                         .to_string(),
                     ClipboardTypes::TutorialCursor4,
                 ),
-                ts_text(" (faster blinking cursor)"),
+                ts_text(t!(" (faster blinking cursor)")),
             ]));
             lines.push(TaggedLine::from(vec![
                 TaggedSpan::new(Span::styled(" ", text_style), Tag::Tutorial),
@@ -677,43 +695,47 @@ pub fn generate_tutorial_text(
                     "flyline set-cursor --backend flyline --style \"#33ccff\" --effect fade --effect-easing in-out-sine --interpolate-easing out-elastic --interpolate 2".to_string(),
                     ClipboardTypes::TutorialCursor5,
                 ),
-                ts_text(" (RGB fade effect with smooth easing and bouncing interpolation when the cursor moves)"),
+                ts_text(t!(" (RGB fade effect with smooth easing and bouncing interpolation when the cursor moves)")),
             ]));
             lines.push(empty());
             lines.push(TaggedLine::from(vec![
                 TaggedSpan::new(
-                    Span::styled("Try tab completing ", text_style),
+                    Span::styled(t!("Try tab completing "), text_style),
                     Tag::Tutorial,
                 ),
                 ts_copiable(
                     "flyline set-cursor --interpolate-easing ".to_string(),
                     ClipboardTypes::TutorialCursor6,
                 ),
-                ts_text(" for an example of flyline's dynamic tab completion descriptions!"),
+                ts_text(t!(
+                    " for an example of flyline's dynamic tab completion descriptions!"
+                )),
             ]));
         }
         TutorialStep::AutoClosing => {
             lines.push(tl(Span::styled(
-                "Auto-Closing Quotes & Brackets",
+                t!("Auto-Closing Quotes & Brackets"),
                 heading_style,
             )));
             lines.push(empty());
             lines.push(tl(Span::styled(
-                "Flyline automatically inserts closing characters when you type an opening one.",
+                t!(
+                    "Flyline automatically inserts closing characters when you type an opening one."
+                ),
                 text_style,
             )));
             lines.push(tl(Span::styled(
-                "Try typing `echo \"$(` and watch Flyline insert the closing `)\"` for you.",
+                t!("Try typing `echo \"$(` and watch Flyline insert the closing `)\"` for you."),
                 text_style,
             )));
             lines.push(tl(Span::styled(
-                "This works for parentheses (), square brackets [], curly braces {}, and quotes \" \".",
+                t!("This works for parentheses (), square brackets [], curly braces {}, and quotes \" \"."),
                 text_style,
             )));
             lines.push(empty());
             lines.push(TaggedLine::from(vec![
                 TaggedSpan::new(
-                    Span::styled("Toggle this feature with ", text_style),
+                    Span::styled(t!("Toggle this feature with "), text_style),
                     Tag::Tutorial,
                 ),
                 ts_copiable(
@@ -724,27 +746,27 @@ pub fn generate_tutorial_text(
             ]));
         }
         TutorialStep::FineGrainDeletion => {
-            lines.push(tl(Span::styled("Fine-Grained Deletion", heading_style)));
+            lines.push(tl(Span::styled(t!("Fine-Grained Deletion"), heading_style)));
             lines.push(empty());
             lines.push(TaggedLine::from(vec![
                 ts_key("Ctrl+Backspace"),
-                ts_text(" deletes one whitespace-delimited word to the left."),
+                ts_text(t!(" deletes one whitespace-delimited word to the left.")),
             ]));
             lines.push(TaggedLine::from(vec![
                 ts_key("Alt+Backspace"),
-                ts_text(
-                    " deletes one chunk to the left using finer punctuation or path-segment boundaries.",
-                ),
+                ts_text(t!(
+                    " deletes one chunk to the left using finer punctuation or path-segment boundaries."
+                )),
             ]));
             lines.push(TaggedLine::from(vec![
                 ts_key("Ctrl+Delete"),
-                ts_text(" and "),
+                ts_text(t!(" and ")),
                 ts_key("Alt+Delete"),
-                ts_text(" work similarly."),
+                ts_text(t!(" work similarly.")),
             ]));
             lines.push(empty());
             lines.push(tl(Span::styled(
-                "Try it out on this example command:",
+                t!("Try it out on this example command:"),
                 text_style,
             )));
             lines.push(TaggedLine::from(vec![
@@ -756,29 +778,29 @@ pub fn generate_tutorial_text(
             ]));
         }
         TutorialStep::AgentMode => {
-            lines.push(tl(Span::styled("Agent Mode", heading_style)));
+            lines.push(tl(Span::styled(t!("Agent Mode"), heading_style)));
             lines.push(empty());
             lines.push(tl(Span::styled(
-                "Flyline can interface with your AI agent to help you write commands.",
+                t!("Flyline can interface with your AI agent to help you write commands."),
                 text_style,
             )));
             lines.push(tl(Span::styled(
-                "Try activating agent mode and get help setting it up:",
+                t!("Try activating agent mode and get help setting it up:"),
                 text_style,
             )));
             lines.push(TaggedLine::from(vec![
-                TaggedSpan::new(Span::styled("Type `", text_style), Tag::Tutorial),
+                TaggedSpan::new(Span::styled(t!("Type `"), text_style), Tag::Tutorial),
                 ts_copiable(
                     "list files older than three days".to_string(),
                     ClipboardTypes::TutorialAgentMode,
                 ),
-                ts_text("` and press "),
+                ts_text(t!("` and press ")),
                 ts_key("Alt+Enter"),
                 ts_text("."),
             ]));
             lines.push(empty());
             lines.push(TaggedLine::from(vec![
-                ts_text("When setting it up, you can specify a `--trigger-prefix`. If the buffer starts with this prefix, flyline will activate agent mode when you press "),
+                ts_text(t!("When setting it up, you can specify a `--trigger-prefix`. If the buffer starts with this prefix, flyline will activate agent mode when you press ")),
                 ts_key("Enter"),
                 ts_text("."),
             ]));
@@ -813,17 +835,17 @@ pub fn generate_tutorial_text(
         // }
         TutorialStep::End => {
             lines.push(tl(Span::styled(
-                "You've reached the end of the tutorial!",
+                t!("You've reached the end of the tutorial!"),
                 text_style.add_modifier(Modifier::BOLD),
             )));
             lines.push(empty());
             lines.push(tl(Span::styled(
-                "Feel free to explore and experiment with flyline's features.",
+                t!("Feel free to explore and experiment with flyline's features."),
                 text_style,
             )));
             lines.push(TaggedLine::from(vec![
                 TaggedSpan::new(
-                    Span::styled("For more information, check out ", text_style),
+                    Span::styled(t!("For more information, check out "), text_style),
                     Tag::Tutorial,
                 ),
                 ts_copiable(
@@ -831,7 +853,7 @@ pub fn generate_tutorial_text(
                     ClipboardTypes::TutorialRunHelp,
                 ),
                 TaggedSpan::new(
-                    Span::styled(" and https://github.com/HalFrgrd/flyline.", text_style),
+                    Span::styled(t!(" and https://github.com/HalFrgrd/flyline."), text_style),
                     Tag::Tutorial,
                 ),
             ]));

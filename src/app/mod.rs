@@ -490,7 +490,7 @@ impl<'a> App<'a> {
             dismissed_agent_mode_buffer: None,
             mouse_state: time_it!(
                 "startup: mouse state",
-                MouseState::initialize(&settings.mouse_mode)
+                MouseState::initialize(&settings.mouse_mode, settings.right_click_menu)
             ),
             content_mode: ContentMode::Normal,
             last_contents: None,
@@ -517,7 +517,10 @@ impl<'a> App<'a> {
         app
     }
 
-    fn sync_viewport_top_from_cpr(&mut self) {
+    /// Queries the terminal for the current cursor row (CPR) and uses it to
+    /// compute the inline viewport's on-screen origin.  Returns `true` when the
+    /// position was successfully synchronised.
+    fn sync_viewport_top_from_cpr(&mut self) -> bool {
         let req_csi = Csi::Cursor(CsiCursor::RequestActivePositionReport);
         let _ = crate::flush_stdout!("{req_csi}");
 
@@ -529,21 +532,23 @@ impl<'a> App<'a> {
         };
 
         if GLOBAL_EVENT_READER
-            .poll(Some(Duration::from_millis(500)), is_apr_event)
+            .poll(Some(Duration::from_millis(2000)), is_apr_event)
             .unwrap_or(false)
-        {
-            if let Ok(TerminaEvent::Csi(Csi::Cursor(CsiCursor::ActivePositionReport {
-                line,
-                ..
+            && let Ok(TerminaEvent::Csi(Csi::Cursor(CsiCursor::ActivePositionReport {
+                line, ..
             }))) = GLOBAL_EVENT_READER.read(is_apr_event)
-            {
-                let abs_row = line.get_zero_based();
-                let top = abs_row.saturating_sub(self.terminal.inline_cursor_y());
-                self.terminal.set_viewport_top(top);
-                if let Some(ref mut drawn) = self.last_contents {
-                    drawn.viewport_start = top;
-                }
+        {
+            let abs_row = line.get_zero_based();
+            let top = abs_row.saturating_sub(self.terminal.inline_cursor_y());
+            self.terminal.set_viewport_top(top);
+            if let Some(ref mut drawn) = self.last_contents {
+                drawn.viewport_start = top;
             }
+            log::info!("Viewport top synchronised via CPR: row {top}");
+            true
+        } else {
+            log::warn!("CPR timeout: inline viewport origin not synchronised");
+            false
         }
     }
 
@@ -614,8 +619,12 @@ impl<'a> App<'a> {
         'main_loop: loop {
             if self.app_start_time.elapsed() >= Duration::from_millis(100) {
                 if !self.has_requested_cpr {
-                    self.has_requested_cpr = true;
-                    self.sync_viewport_top_from_cpr();
+                    // Keep retrying until the terminal answers the cursor
+                    // position report; without it the inline viewport cannot
+                    // be positioned reliably.
+                    if self.sync_viewport_top_from_cpr() {
+                        self.has_requested_cpr = true;
+                    }
                 }
                 if !self.has_enabled_focus_tracking {
                     self.has_enabled_focus_tracking = true;
@@ -681,6 +690,23 @@ impl<'a> App<'a> {
                         .unwrap_or_else(|e| {
                             log::error!("Failed to set viewport height: {}", e);
                         });
+                }
+
+                // Keep the viewport fully on screen: if the content is taller
+                // than the space below the viewport origin, shift the origin
+                // up so the bottom of the content is not truncated.
+                if let Some(top) = self.terminal.viewport_top() {
+                    let overflow = (top + desired_height).saturating_sub(last_terminal_size.height);
+                    if overflow > 0 {
+                        let new_top = top.saturating_sub(overflow);
+                        log::info!(
+                            "Shifting viewport top from {top} to {new_top} (overflow {overflow})"
+                        );
+                        self.terminal.set_viewport_top(new_top);
+                        if let Some(ref mut drawn) = self.last_contents {
+                            drawn.viewport_start = new_top;
+                        }
+                    }
                 }
 
                 let prev_contents = std::mem::take(&mut self.last_contents);
