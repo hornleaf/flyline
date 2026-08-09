@@ -83,6 +83,12 @@ unsafe impl Sync for DlHandle {}
 
 static KEPT_LIBRARY_HANDLE: Mutex<Option<DlHandle>> = Mutex::new(None);
 
+/// The input stream that flyline replaced at load time.  In a login shell the
+/// saved-stream stack can contain only flyline's own entries, so the unload
+/// path uses this as the reference stream to restore instead of searching the
+/// stack for a non-flyline entry.
+static ORIGINAL_INPUT_STREAM: Mutex<Option<ReferenceStream>> = Mutex::new(None);
+
 struct CallDepthGuard;
 
 impl CallDepthGuard {
@@ -117,6 +123,17 @@ fn report_error_no_panic(message: &str) {
 // C-compatible getter function that bash will call
 extern "C" fn flyline_get_char() -> c_int {
     let _depth = CallDepthGuard::enter();
+    // An unload requested from a nested input source (eval/source/command
+    // substitution) is deferred until bash is back on flyline's stream.  At
+    // that point finish the teardown before the instance is touched and end
+    // the current line with a newline instead of EOF, so a login shell does
+    // not treat the unload as end-of-input and log out.
+    if FLYLINE_UNLOAD_PENDING.swap(false, Ordering::SeqCst) {
+        unsafe {
+            finish_deferred_unload();
+        }
+        return b'\n' as c_int;
+    }
     let result = if let Some(boxed) = FLYLINE_INSTANCE_PTR
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -147,6 +164,11 @@ extern "C" fn flyline_get_char() -> c_int {
                     "flyline_get_char: FLYLINE_INSTANCE_PTR is None; restoring readline stdin",
                 );
                 bash_symbols::with_input_from_stdin();
+                // Signal the end of the current (empty) line instead of EOF:
+                // returning EOF makes a login shell treat the unload as the
+                // end of input and log out.  The next get_char call will use
+                // the restored stdin/readline stream.
+                return b'\n' as c_int;
             } else {
                 report_stderr_no_panic("flyline_get_char: FLYLINE_INSTANCE_PTR is None");
             }
@@ -154,15 +176,6 @@ extern "C" fn flyline_get_char() -> c_int {
         bash_symbols::EOF
     };
 
-    // If `enable -d flyline` was executed from inside our own code (a
-    // runBashCommand key binding, agent mode, ...), the instance borrow above
-    // has now ended and this is the safe point to finish the deferred teardown
-    // before bash reads from a different input stream.
-    if FLYLINE_UNLOAD_PENDING.swap(false, Ordering::SeqCst) {
-        unsafe {
-            finish_deferred_unload();
-        }
-    }
     result
 }
 
@@ -408,6 +421,13 @@ fn flyline_load_common() -> c_int {
 
     let setup_bash_input = |bash_input: *mut bash_symbols::BashInput| {
         let old_name = unsafe { (*bash_input).name };
+        let old_getter = unsafe { (*bash_input).getter };
+        let old_ungetter = unsafe { (*bash_input).ungetter };
+        let old_stream_type = unsafe { (*bash_input).stream_type };
+        *ORIGINAL_INPUT_STREAM
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) =
+            Some((old_getter, old_ungetter, old_stream_type));
         // Bash expects name to be heap allocated so it can free it later
         let name = c"flyline";
         let name_ptr = unsafe { bash_symbols::locked_xmalloc_cstr(name) };
@@ -556,18 +576,22 @@ pub extern "C" fn flyline_builtin_unload() {
     });
 
     // If the unload was requested while flyline code is still on the call
-    // stack, bash is about to dlclose() this library under our feet.  Keep the
-    // library mapped so the in-flight call can finish, and defer the real
-    // teardown to the next flyline_get_char() call.  The extra dlopen()
-    // reference is released on the next load; calling dlclose() from inside
-    // our own code would unmap the function we are returning from.
-    if FLYLINE_CALL_DEPTH.load(Ordering::SeqCst) > 0 {
-        log::warn!(
-            "flyline unload requested from inside flyline code; deferring teardown to the next input read"
-        );
-        keep_library_loaded();
-        FLYLINE_UNLOAD_PENDING.store(true, Ordering::SeqCst);
-        return;
+    // stack, or while bash is reading from a nested input source (eval,
+    // source, command substitution, ...), bash is about to dlclose() this
+    // library under our feet.  Keep the library mapped so the in-flight call
+    // can finish, and defer the real teardown to the next flyline_get_char()
+    // call, when bash is back on flyline's top-level stream.  The extra
+    // dlopen() reference is released on the next load.
+    unsafe {
+        let nested_input = !is_flyline_stream(&raw const bash_symbols::bash_input);
+        if FLYLINE_CALL_DEPTH.load(Ordering::SeqCst) > 0 || nested_input {
+            log::warn!(
+                "flyline unload requested from inside flyline code or a nested input source; deferring teardown to the next input read"
+            );
+            keep_library_loaded();
+            FLYLINE_UNLOAD_PENDING.store(true, Ordering::SeqCst);
+            return;
+        }
     }
 
     let had_instance = FLYLINE_INSTANCE_PTR
@@ -650,21 +674,14 @@ type ReferenceStream = (
 /// so the first non-flyline entry on the saved-stream stack is the reference.
 #[cfg(not(feature = "pre_bash_4_4"))]
 unsafe fn find_reference_stream() -> Option<ReferenceStream> {
-    unsafe {
-        let mut current = bash_symbols::stream_list;
-        while !current.is_null() {
-            let node = &*current;
-            if !is_flyline_stream(&raw const node.bash_input) {
-                return Some((
-                    node.bash_input.getter,
-                    node.bash_input.ungetter,
-                    node.bash_input.stream_type,
-                ));
-            }
-            current = node.next;
-        }
-        None
-    }
+    // Use the stream that flyline replaced at load time.  Scanning the saved
+    // stream stack is unsafe in login shells: every entry can be flyline's
+    // own stream, or an already-finished rc-file stream that would restore
+    // Bash onto freed input state.
+    ORIGINAL_INPUT_STREAM
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
 }
 
 #[cfg(not(feature = "pre_bash_4_4"))]
