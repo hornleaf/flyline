@@ -231,6 +231,30 @@ def main():
         scenario(
             fd,
             pid,
+            "function containing eval enable -d flyline",
+            'f() { eval "enable -d flyline"; }; f; '
+            "enable -p | grep -q flyline || echo FUNC_EVAL_UNLOADED",
+            ["FUNC_EVAL_UNLOADED"],
+        )
+    )
+
+    load()
+    results.append(
+        scenario(
+            fd,
+            pid,
+            "function containing source enable -d flyline",
+            'f() { source <(echo \'enable -d flyline\'); }; f; '
+            "enable -p | grep -q flyline || echo FUNC_SOURCE_UNLOADED",
+            ["FUNC_SOURCE_UNLOADED"],
+        )
+    )
+
+    load()
+    results.append(
+        scenario(
+            fd,
+            pid,
             "eval unload + immediate reload",
             f'eval "enable -d flyline && enable -f {flyline_so} flyline"; '
             "enable -p | grep -q flyline && echo RELOADED",
