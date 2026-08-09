@@ -70,6 +70,11 @@ static FLYLINE_INSTANCE_PTR: Mutex<Option<Box<Flyline>>> = Mutex::new(None);
 // next flyline_get_char() call reaches a safe point.
 static FLYLINE_CALL_DEPTH: AtomicUsize = AtomicUsize::new(0);
 static FLYLINE_UNLOAD_PENDING: AtomicBool = AtomicBool::new(false);
+/// After `enable -d flyline`, if bash keeps calling this getter because the
+/// input stream could not be restored, pass raw bytes straight through from
+/// stdin instead of touching any flyline state.  This is the final safety net
+/// for login shells whose saved-stream stack cannot be rebuilt safely.
+static FLYLINE_PASS_THROUGH: AtomicBool = AtomicBool::new(false);
 
 // When `enable -d flyline` runs from inside our own code, we add an extra
 // dlopen() reference so bash's dlclose() does not unmap the library while we
@@ -123,14 +128,40 @@ fn report_error_no_panic(message: &str) {
 // C-compatible getter function that bash will call
 extern "C" fn flyline_get_char() -> c_int {
     let _depth = CallDepthGuard::enter();
+    if FLYLINE_PASS_THROUGH.load(Ordering::Relaxed) {
+        let mut byte: u8 = 0;
+        loop {
+            let n = unsafe {
+                libc::read(
+                    0,
+                    &mut byte as *mut u8 as *mut libc::c_void,
+                    1,
+                )
+            };
+            if n > 0 {
+                return byte as c_int;
+            }
+            if n == 0 {
+                return bash_symbols::EOF;
+            }
+            let err = std::io::Error::last_os_error();
+            if err.kind() != std::io::ErrorKind::Interrupted {
+                return bash_symbols::EOF;
+            }
+        }
+    }
     // An unload requested from a nested input source (eval/source/command
     // substitution) is deferred until bash is back on flyline's stream.  At
-    // that point finish the teardown before the instance is touched and end
-    // the current line with a newline instead of EOF, so a login shell does
-    // not treat the unload as end-of-input and log out.
+    // that point finish the teardown before the instance is touched, then
+    // delegate one read to the restored stream's getter so bash seamlessly
+    // continues on readline.  A synthetic newline would make bash process an
+    // extra empty command, and EOF would make a login shell log out.
     if FLYLINE_UNLOAD_PENDING.swap(false, Ordering::SeqCst) {
         unsafe {
             finish_deferred_unload();
+            if let Some(getter) = bash_symbols::bash_input.getter {
+                return getter();
+            }
         }
         return b'\n' as c_int;
     }
@@ -370,6 +401,7 @@ const FLYLINE_ENV_VAR_VALUE: &str = env!("CARGO_PKG_VERSION");
 fn flyline_load_common() -> c_int {
     log::info!("flyline_builtin_load called, initializing flyline");
     release_kept_library_reference();
+    FLYLINE_PASS_THROUGH.store(false, Ordering::SeqCst);
     // Returning 0 means the load fails
     const SUCCESS: c_int = 1;
     const FAILURE: c_int = 0;
@@ -565,6 +597,12 @@ fn flyline_load_common() -> c_int {
 #[unsafe(no_mangle)]
 pub extern "C" fn flyline_builtin_unload() {
     log::info!("flyline_builtin_unload called, unloading flyline");
+    // From this point on, any getter call that still reaches flyline must be
+    // answered from raw stdin rather than from flyline state.
+    FLYLINE_PASS_THROUGH.store(true, Ordering::SeqCst);
+    // Keep the library mapped: bash will dlclose() it after this returns, but
+    // the input stream may still point at flyline_get_char in login shells.
+    keep_library_loaded();
     crate::threads::join_all_before_unload();
 
     bash_funcs::unset_env_var(FLYLINE_ENV_VAR_NAME).unwrap_or_else(|e| {
@@ -588,7 +626,6 @@ pub extern "C" fn flyline_builtin_unload() {
             log::warn!(
                 "flyline unload requested from inside flyline code or a nested input source; deferring teardown to the next input read"
             );
-            keep_library_loaded();
             FLYLINE_UNLOAD_PENDING.store(true, Ordering::SeqCst);
             return;
         }
